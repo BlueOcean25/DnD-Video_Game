@@ -25,7 +25,7 @@
             border: 3px solid rgba(255, 255, 255, 0.4);
             border-radius: 50%;
             touch-action: none; 
-            display: none;      /* Hidden by default */
+            display: none;      
         }
 
         /* Touchscreen Joystick Inner Red Thumb Knob styling */
@@ -77,9 +77,10 @@
         // Random alpha-numeric Session ID marker (e.g., "z4b9a")
         socket.playerId = Math.random().toString(36).substring(7);
 
-        // **FIX: HANDSHAKE SIGNAL** - Tell the server we exist the exact millisecond we connect!
+        // HANDSHAKE SIGNAL: Tell the server we just joined, and request positions!
         socket.onopen = function() {
             socket.send(JSON.stringify({
+                type: 'join', // Tag this message as a brand new arrival
                 id: socket.playerId,
                 x: cube.position.x,
                 y: cube.position.y
@@ -87,25 +88,36 @@
         };
 
         // ==========================================
-        // 4. LISTENING FOR MOVEMENT SIGNALS FROM FRIENDS
+        // 4. LISTENING FOR SIGNALS FROM THE SERVER
         // ==========================================
         socket.onmessage = function(event) {
             const data = JSON.parse(event.data);
             
-            // Only parse data if it comes from another device player ID
-            if (data.id !== socket.playerId) {
-                // If a new friend connects, build a distinct Red Cube token map position marker
-                if (!remotePlayers[data.id]) {
-                    const remoteGeometry = new THREE.BoxGeometry(2, 2, 2);
-                    const remoteMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
-                    remotePlayers[data.id] = new THREE.Mesh(remoteGeometry, remoteMaterial);
-                    scene.add(remotePlayers[data.id]);
-                }
-                
-                // Track current target positions
-                remotePlayers[data.id].position.x = data.x;
-                remotePlayers[data.id].position.y = data.y;
+            // Ignore messages sent by ourselves
+            if (data.id === socket.playerId) return;
+
+            // **FIX: AUTOMATIC GREETING REPLY**
+            // If we are already online and hear a NEW player join, instantly send our position back to them!
+            if (data.type === 'join') {
+                socket.send(JSON.stringify({
+                    type: 'reply', // Tag it as a reply so it doesn't cause an infinite loop
+                    id: socket.playerId,
+                    x: cube.position.x,
+                    y: cube.position.y
+                }));
             }
+
+            // Build or update the red cube for the other player
+            if (!remotePlayers[data.id]) {
+                const remoteGeometry = new THREE.BoxGeometry(2, 2, 2);
+                const remoteMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+                remotePlayers[data.id] = new THREE.Mesh(remoteGeometry, remoteMaterial);
+                scene.add(remotePlayers[data.id]);
+            }
+            
+            // Move their cube to their current coordinates
+            remotePlayers[data.id].position.x = data.x;
+            remotePlayers[data.id].position.y = data.y;
         };
 
         // ==========================================
@@ -119,9 +131,10 @@
             if (event.key === 'ArrowLeft' || event.key === 'a') { cube.position.x -= 0.2; moved = true; }
             if (event.key === 'ArrowRight' || event.key === 'd') { cube.position.x += 0.2; moved = true; }
             
-            // Broadcast your newly updated frame position values instantly to Render
+            // Broadcast your movement
             if (moved && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({
+                    type: 'move',
                     id: socket.playerId,
                     x: cube.position.x,
                     y: cube.position.y
@@ -135,9 +148,7 @@
         const zone = document.getElementById('joystick-zone');
         const stick = document.getElementById('joystick-stick');
 
-        // **FIX: STUNTS DOUBLE SCANNER** - Verifies it's a mobile device layout viewport size, not just a touchscreen laptop!
         const isMobileTouch = ('ontouchstart' in window || navigator.maxTouchPoints > 0) && window.innerWidth < 1024;
-        
         if (isMobileTouch) {
             zone.style.display = 'block';
         }
@@ -155,7 +166,7 @@
         window.addEventListener('touchmove', (e) => {
             if (!joystickActive) return;
 
-            const touch = e.touches[0];
+            const touch = e.touches;
             let deltaX = touch.clientX - startX;
             let deltaY = touch.clientY - startY;
 
@@ -173,6 +184,7 @@
 
             if (socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({
+                    type: 'move',
                     id: socket.playerId,
                     x: cube.position.x,
                     y: cube.position.y
