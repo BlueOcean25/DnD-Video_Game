@@ -74,13 +74,12 @@
         const socket = new WebSocket('wss://dnd-video-game.onrender.com');
         const remotePlayers = {};
         
-        // Random alpha-numeric Session ID marker (e.g., "z4b9a")
         socket.playerId = Math.random().toString(36).substring(7);
 
         // HANDSHAKE SIGNAL: Tell the server we just joined, and request positions!
         socket.onopen = function() {
             socket.send(JSON.stringify({
-                type: 'join', // Tag this message as a brand new arrival
+                type: 'join', 
                 id: socket.playerId,
                 x: cube.position.x,
                 y: cube.position.y
@@ -93,14 +92,12 @@
         socket.onmessage = function(event) {
             const data = JSON.parse(event.data);
             
-            // Ignore messages sent by ourselves
             if (data.id === socket.playerId) return;
 
-            // **FIX: AUTOMATIC GREETING REPLY**
-            // If we are already online and hear a NEW player join, instantly send our position back to them!
+            // AUTOMATIC GREETING REPLY
             if (data.type === 'join') {
                 socket.send(JSON.stringify({
-                    type: 'reply', // Tag it as a reply so it doesn't cause an infinite loop
+                    type: 'reply', 
                     id: socket.playerId,
                     x: cube.position.x,
                     y: cube.position.y
@@ -115,7 +112,6 @@
                 scene.add(remotePlayers[data.id]);
             }
             
-            // Move their cube to their current coordinates
             remotePlayers[data.id].position.x = data.x;
             remotePlayers[data.id].position.y = data.y;
         };
@@ -131,7 +127,10 @@
             if (event.key === 'ArrowLeft' || event.key === 'a') { cube.position.x -= 0.2; moved = true; }
             if (event.key === 'ArrowRight' || event.key === 'd') { cube.position.x += 0.2; moved = true; }
             
-            // Broadcast your movement
+            // Apply a soft screen boundary check so keyboard players can't leave the camera view area
+            cube.position.x = Math.max(-5, Math.min(5, cube.position.x));
+            cube.position.y = Math.max(-4, Math.min(4, cube.position.y));
+
             if (moved && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({
                     type: 'move',
@@ -166,7 +165,7 @@
         window.addEventListener('touchmove', (e) => {
             if (!joystickActive) return;
 
-            const touch = e.touches;
+            const touch = e.touches[0];
             let deltaX = touch.clientX - startX;
             let deltaY = touch.clientY - startY;
 
@@ -179,8 +178,13 @@
 
             stick.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
 
-            cube.position.x += (deltaX / maxRadius) * 0.1;
-            cube.position.y -= (deltaY / maxRadius) * 0.1; 
+            // **FIXED PHYSICS MATH:** Smoother scaling values to stop the cube from flying away instantly
+            cube.position.x += (deltaX / maxRadius) * 0.05;
+            cube.position.y -= (deltaY / maxRadius) * 0.05; 
+
+            // **BOUNDARIES LOOKUP MAP:** Locks the player inside a grid so they can never move past the camera eye line
+            cube.position.x = Math.max(-5, Math.min(5, cube.position.x));
+            cube.position.y = Math.max(-4, Math.min(4, cube.position.y));
 
             if (socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({
