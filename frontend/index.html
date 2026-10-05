@@ -24,8 +24,8 @@
             background: rgba(255, 255, 255, 0.1);
             border: 3px solid rgba(255, 255, 255, 0.4);
             border-radius: 50%;
-            touch-action: none; /* Stops mobile browser zooming when dragging thumb */
-            display: none;      /* Hidden by default on computer displays */
+            touch-action: none; 
+            display: none;      /* Hidden by default */
         }
 
         /* Touchscreen Joystick Inner Red Thumb Knob styling */
@@ -40,11 +40,11 @@
             box-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
         }
     </style>
+    <!-- WebGL 3D graphics rendering core blueprint library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-    <!-- Invisible by default on computer desktop displays -->
     <div id="joystick-zone">
         <div id="joystick-stick"></div>
     </div>
@@ -76,6 +76,15 @@
         
         // Random alpha-numeric Session ID marker (e.g., "z4b9a")
         socket.playerId = Math.random().toString(36).substring(7);
+
+        // **FIX: HANDSHAKE SIGNAL** - Tell the server we exist the exact millisecond we connect!
+        socket.onopen = function() {
+            socket.send(JSON.stringify({
+                id: socket.playerId,
+                x: cube.position.x,
+                y: cube.position.y
+            }));
+        };
 
         // ==========================================
         // 4. LISTENING FOR MOVEMENT SIGNALS FROM FRIENDS
@@ -126,15 +135,16 @@
         const zone = document.getElementById('joystick-zone');
         const stick = document.getElementById('joystick-stick');
 
-        // Automatic device detection: unhide joystick container element context for touch screen types
-        if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+        // **FIX: STUNTS DOUBLE SCANNER** - Verifies it's a mobile device layout viewport size, not just a touchscreen laptop!
+        const isMobileTouch = ('ontouchstart' in window || navigator.maxTouchPoints > 0) && window.innerWidth < 1024;
+        
+        if (isMobileTouch) {
             zone.style.display = 'block';
         }
 
         let joystickActive = false;
         let startX = 0, startY = 0;
 
-        // Thumb contact initiated
         zone.addEventListener('touchstart', (e) => {
             joystickActive = true;
             const rect = zone.getBoundingClientRect();
@@ -142,7 +152,6 @@
             startY = rect.top + rect.height / 2;
         });
 
-        // Thumb dragging behavior
         window.addEventListener('touchmove', (e) => {
             if (!joystickActive) return;
 
@@ -150,7 +159,6 @@
             let deltaX = touch.clientX - startX;
             let deltaY = touch.clientY - startY;
 
-            // Enforce layout perimeter borders constraints rule calculations math
             const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
             const maxRadius = 40; 
             if (distance > maxRadius) {
@@ -158,14 +166,11 @@
                 deltaY = (deltaY / distance) * maxRadius;
             }
 
-            // Update visible element location shifts styles
             stick.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
 
-            // Compute grid movements updates coordinates vector modifications maps
             cube.position.x += (deltaX / maxRadius) * 0.1;
-            cube.position.y -= (deltaY / maxRadius) * 0.1; // Inverted alignment matching layout view mechanics
+            cube.position.y -= (deltaY / maxRadius) * 0.1; 
 
-            // Broadcast real-time canvas movements packet text strings up to backend routing engine
             if (socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({
                     id: socket.playerId,
@@ -175,10 +180,9 @@
             }
         }, { passive: false });
 
-        // Thumb lifted up
         window.addEventListener('touchend', () => {
             joystickActive = false;
-            stick.style.transform = 'translate(0px, 0px)'; // Center reset
+            stick.style.transform = 'translate(0px, 0px)'; 
         });
 
         // ==========================================
@@ -187,11 +191,9 @@
         function animate() {
             requestAnimationFrame(animate);
             
-            // Native rotation spinning behaviors engine values
             cube.rotation.x += 0.005;
             cube.rotation.y += 0.005;
             
-            // Apply identical physics rotation spinning loops tracking parameters down for friend targets
             for (let id in remotePlayers) {
                 remotePlayers[id].rotation.x += 0.005;
                 remotePlayers[id].rotation.y += 0.005;
