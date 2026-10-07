@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>DnD Video Game</title>
+    <title>DnD Video Game - 3D Environment</title>
     <style>
         body { 
             margin: 0; 
@@ -54,22 +54,49 @@
         // 1. SETUP THE 3D SCENE & ENGINE CANVAS
         // ==========================================
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        
+        // Dynamic perspective adjustment for true 3D spatial viewing
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
+        // Position camera behind and looking down onto the map environment
+        camera.position.set(0, 8, 12);
+        camera.lookAt(0, 1, 0);
+
         // ==========================================
-        // 2. CREATE YOUR CHARACTER TOKEN (GREEN CUBE)
+        // 2. ADD FLOOR SURFACE & REAL-TIME GRAVITY SETTINGS
+        // ==========================================
+        // Create an organic structural wireframe ground floor
+        const floorGeo = new THREE.PlaneGeometry(30, 30);
+        const floorMat = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = Math.PI / 2; // Flat ground rotation placement
+        scene.add(floor);
+
+        // Add a structural alignment utility tracking grid over the floor mesh
+        const gridHelper = new THREE.GridHelper(30, 30, 0x444444, 0x222222);
+        scene.add(gridHelper);
+
+        // Kinematic Gravity State Variables
+        const gravity = -0.015;      // Downward acceleration per tick
+        let verticalVelocity = 0;   // Instant vertical trajectory
+        let isGrounded = true;       // Floor attachment boundary flag
+
+        // ==========================================
+        // 3. CREATE YOUR CHARACTER TOKEN (GREEN CUBE)
         // ==========================================
         const geometry = new THREE.BoxGeometry(2, 2, 2);
         const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
         const cube = new THREE.Mesh(geometry, material);
+        
+        // Pivot initialization offset forcing bottom surface boundary placement to align cleanly with floor level
+        cube.position.set(0, 1, 0);
         scene.add(cube);
-        camera.position.z = 8;
 
         // ==========================================
-        // 3. PERSISTENT LIVE WEBSOCKET SERVER TUNNEL
+        // 4. PERSISTENT LIVE WEBSOCKET SERVER TUNNEL
         // ==========================================
         const socket = new WebSocket('wss://dnd-video-game.onrender.com');
         const remotePlayers = {};
@@ -82,12 +109,26 @@
                 type: 'join', 
                 id: socket.playerId,
                 x: cube.position.x,
-                y: cube.position.y
+                y: cube.position.y,
+                z: cube.position.z
             }));
         };
 
+        // Helper event emitter utility dispatching coordinates packet over the active connection network
+        function broadcastMovement() {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: 'move',
+                    id: socket.playerId,
+                    x: cube.position.x,
+                    y: cube.position.y,
+                    z: cube.position.z
+                }));
+            }
+        }
+
         // ==========================================
-        // 4. LISTENING FOR SIGNALS FROM THE SERVER
+        // 5. LISTENING FOR SIGNALS FROM THE SERVER
         // ==========================================
         socket.onmessage = function(event) {
             const data = JSON.parse(event.data);
@@ -100,8 +141,20 @@
                     type: 'reply', 
                     id: socket.playerId,
                     x: cube.position.x,
-                    y: cube.position.y
+                    y: cube.position.y,
+                    z: cube.position.z
                 }));
+            }
+
+            // CLEAN DISCONNECT REMOVAL ACTION LOGIC
+            if (data.type === 'leave') {
+                if (remotePlayers[data.id]) {
+                    scene.remove(remotePlayers[data.id]);
+                    remotePlayers[data.id].geometry.dispose();
+                    remotePlayers[data.id].material.dispose();
+                    delete remotePlayers[data.id];
+                }
+                return;
             }
 
             // Build or update the red cube for the other player
@@ -112,37 +165,42 @@
                 scene.add(remotePlayers[data.id]);
             }
             
+            // Map tracking fields to the proper 3D coordinates
             remotePlayers[data.id].position.x = data.x;
             remotePlayers[data.id].position.y = data.y;
+            remotePlayers[data.id].position.z = data.z !== undefined ? data.z : 0;
         };
 
         // ==========================================
-        // 5. LAPTOP & COMPUTER ARROW KEYBOARD INPUTS
+        // 6. LAPTOP & COMPUTER ARROW KEYBOARD INPUTS
         // ==========================================
         window.addEventListener('keydown', (event) => {
             let moved = false;
             
-            if (event.key === 'ArrowUp' || event.key === 'w') { cube.position.y += 0.2; moved = true; }
-            if (event.key === 'ArrowDown' || event.key === 's') { cube.position.y -= 0.2; moved = true; }
-            if (event.key === 'ArrowLeft' || event.key === 'a') { cube.position.x -= 0.2; moved = true; }
-            if (event.key === 'ArrowRight' || event.key === 'd') { cube.position.x += 0.2; moved = true; }
+            // X & Z movement handles translation across flat ground terrain
+            if (event.key === 'ArrowUp' || event.key === 'w') { cube.position.z -= 0.3; moved = true; }
+            if (event.key === 'ArrowDown' || event.key === 's') { cube.position.z += 0.3; moved = true; }
+            if (event.key === 'ArrowLeft' || event.key === 'a') { cube.position.x -= 0.3; moved = true; }
+            if (event.key === 'ArrowRight' || event.key === 'd') { cube.position.x += 0.3; moved = true; }
             
-            // Apply a soft screen boundary check so keyboard players can't leave the camera view area
-            cube.position.x = Math.max(-5, Math.min(5, cube.position.x));
-            cube.position.y = Math.max(-4, Math.min(4, cube.position.y));
+            // JUMP MECHANIC: Apply instantaneous vertical impulse velocity when standing on floor level
+            if (event.key === ' ' && isGrounded) {
+                verticalVelocity = 0.35;
+                isGrounded = false;
+                moved = true;
+            }
+            
+            // Map limits to prevent users bounding off edge boundaries
+            cube.position.x = Math.max(-14, Math.min(14, cube.position.x));
+            cube.position.z = Math.max(-14, Math.min(14, cube.position.z));
 
-            if (moved && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({
-                    type: 'move',
-                    id: socket.playerId,
-                    x: cube.position.x,
-                    y: cube.position.y
-                }));
+            if (moved) {
+                broadcastMovement();
             }
         });
 
         // ==========================================
-        // 6. TOUCHSCREEN MOBILE CONTROLLER LOGIC
+        // 7. TOUCHSCREEN MOBILE CONTROLLER LOGIC
         // ==========================================
         const zone = document.getElementById('joystick-zone');
         const stick = document.getElementById('joystick-stick');
@@ -178,46 +236,53 @@
 
             stick.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
 
-            // **FIXED PHYSICS MATH:** Smoother scaling values to stop the cube from flying away instantly
-            cube.position.x += (deltaX / maxRadius) * 0.05;
-            cube.position.y -= (deltaY / maxRadius) * 0.05; 
+            // Map mobile translation values to 3D Ground Coordinates (X & Z Plane)
+            cube.position.x += (deltaX / maxRadius) * 0.1;
+            cube.position.z += (deltaY / maxRadius) * 0.1; 
 
-            // **BOUNDARIES LOOKUP MAP:** Locks the player inside a grid so they can never move past the camera eye line
-            cube.position.x = Math.max(-5, Math.min(5, cube.position.x));
-            cube.position.y = Math.max(-4, Math.min(4, cube.position.y));
+            // Environment floor limits boundaries containment check 
+            cube.position.x = Math.max(-14, Math.min(14, cube.position.x));
+            cube.position.z = Math.max(-14, Math.min(14, cube.position.z));
 
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({
-                    type: 'move',
-                    id: socket.playerId,
-                    x: cube.position.x,
-                    y: cube.position.y
-                }));
-            }
+            broadcastMovement();
+
         }, { passive: false });
-
         window.addEventListener('touchend', () => {
-            joystickActive = false;
-            stick.style.transform = 'translate(0px, 0px)'; 
+        joystickActive = false;
+        stick.style.transform = 'translate(0px, 0px)';
         });
-
+        // Window resize adaptation handler
+        window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        });
         // ==========================================
-        // 7. CONTINUOUS FRAME RE-DRAW ANIMATION LOOP
+        // 8. CONTINUOUS FRAME RE-DRAW ANIMATION LOOP
         // ==========================================
         function animate() {
-            requestAnimationFrame(animate);
-            
-            cube.rotation.x += 0.005;
-            cube.rotation.y += 0.005;
-            
-            for (let id in remotePlayers) {
-                remotePlayers[id].rotation.x += 0.005;
-                remotePlayers[id].rotation.y += 0.005;
-            }
-            
-            renderer.render(scene, camera);
+        requestAnimationFrame(animate);
+        // --- KINEMATIC GRAVITY ENGINE SIMULATION ---
+        if (!isGrounded) {
+        verticalVelocity += gravity; // Pull downwards over time
+        cube.position.y += verticalVelocity;
+        // Floor plane boundary checking threshold (bottom height box matching 1)
+        if (cube.position.y <= 1) {
+        cube.position.y = 1;
+        verticalVelocity = 0;
+        isGrounded = true;
+        }
+        broadcastMovement(); // Share ongoing falling updates with peer networks
+        }
+        // Continuous mesh presentation rotation
+        cube.rotation.x += 0.005;
+        cube.rotation.y += 0.005;
+        for (let id in remotePlayers) {
+        remotePlayers[id].rotation.x += 0.005;
+        remotePlayers[id].rotation.y += 0.005;
+        }
+        renderer.render(scene, camera);
         }
         animate();
     </script>
 </body>
-</html>
