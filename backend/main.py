@@ -13,6 +13,7 @@ import websockets
 
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
+GAME_VERSION = "v0.5.2-alpha"
 connected_players = set()
 
 
@@ -135,6 +136,13 @@ async def handle_auth_message(websocket, data):
                 "type": "account_names",
                 "names": list_account_names(),
             }))
+        elif message_type == "check_version":
+            client_version = data.get("version")
+            if isinstance(client_version, str) and client_version != GAME_VERSION:
+                await websocket.send(json.dumps({
+                    "type": "update_available",
+                    "version": GAME_VERSION,
+                }))
         elif message_type == "login":
             name = data.get("name", "")
             password = data.get("password", "")
@@ -204,6 +212,7 @@ async def handler(websocket):
 
             if data.get("type") in {
                 "get_account_names",
+                "check_version",
                 "login",
                 "request_reset_code",
                 "reset_password",

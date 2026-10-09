@@ -53,6 +53,34 @@
         #auth-status {
             overflow-wrap: anywhere;
         }
+        #update-banner {
+            position: fixed;
+            top: 12px;
+            left: 50%;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-sizing: border-box;
+            width: min(92vw, 640px);
+            padding: 12px;
+            transform: translateX(-50%);
+            border: 1px solid #d6a83b;
+            border-radius: 8px;
+            background: #332b17;
+            color: white;
+        }
+        #update-banner[hidden] {
+            display: none;
+        }
+        #update-message {
+            flex: 1;
+        }
+        #update-banner button {
+            padding: 8px 12px;
+            font: inherit;
+            cursor: pointer;
+        }
 
         /* Touchscreen Joystick Outer Ring styling */
         #joystick-zone {
@@ -135,6 +163,12 @@
         </section>
     </div>
 
+    <aside id="update-banner" hidden role="status" aria-live="polite">
+        <span id="update-message"></span>
+        <button id="reload-update-button" type="button">Reload now</button>
+        <button id="dismiss-update-button" type="button">Later</button>
+    </aside>
+
     <div id="joystick-zone">
         <div id="joystick-stick"></div>
     </div>
@@ -181,30 +215,167 @@
         scene.add(cube);
 
         // 4. PERSISTENT LIVE WEBSOCKET SERVER TUNNEL
-        const socket = new WebSocket('wss://dnd-video-game.onrender.com');
+        const APP_VERSION = 'v0.5.2-alpha';
+        let socket;
         const remotePlayers = {};
         const authOverlay = document.getElementById('auth-overlay');
         const loginForm = document.getElementById('login-form');
         const resetForm = document.getElementById('reset-form');
         const authStatus = document.getElementById('auth-status');
         const resetName = document.getElementById('reset-name');
+        const updateBanner = document.getElementById('update-banner');
+        const updateMessage = document.getElementById('update-message');
         let isAuthenticated = false;
+        let reloginRequired = false;
+        let availableUpdateVersion = '';
+        let dismissedUpdateVersion = '';
 
-        socket.playerId = Math.random().toString(36).substring(7);
+        const playerId = Math.random().toString(36).substring(7);
 
         function sendAuthMessage(data) {
-            if (socket.readyState !== WebSocket.OPEN) {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
                 authStatus.textContent = 'The game server is not connected. Please try again.';
                 return;
             }
             socket.send(JSON.stringify(data));
         }
 
-        // Request the account names used by the password-reset selector.
-        socket.onopen = function() {
-            authStatus.textContent = 'Connected. Log in or reset your password.';
-            sendAuthMessage({ type: 'get_account_names' });
-        };
+        function connectToServer() {
+            const connection = new WebSocket('wss://dnd-video-game.onrender.com');
+            socket = connection;
+            connection.playerId = playerId;
+
+            connection.onopen = function() {
+                authStatus.textContent = reloginRequired
+                    ? 'Connection restored. Log in again to rejoin.'
+                    : 'Connected. Log in or reset your password.';
+                sendAuthMessage({ type: 'check_version', version: APP_VERSION });
+                sendAuthMessage({ type: 'get_account_names' });
+            };
+
+            connection.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'update_available') {
+                    availableUpdateVersion = data.version;
+                    updateMessage.textContent =
+                        `Update ${data.version} is available. Reload the page to get the latest version.`;
+                    if (dismissedUpdateVersion !== data.version) {
+                        updateBanner.hidden = false;
+                    }
+                    return;
+                }
+
+                if (data.type === 'account_names') {
+                    resetName.replaceChildren(new Option('Choose your name', ''));
+                    for (const name of data.names) {
+                        resetName.add(new Option(name, name));
+                    }
+                    return;
+                }
+
+                if (data.type === 'login_result') {
+                    if (!data.success) {
+                        authStatus.textContent = 'Login failed. Check your name and password.';
+                        return;
+                    }
+                    isAuthenticated = true;
+                    reloginRequired = false;
+                    authOverlay.hidden = true;
+                    authStatus.textContent = '';
+                    connection.send(JSON.stringify({
+                        type: 'join',
+                        id: connection.playerId,
+                        x: cube.position.x,
+                        y: cube.position.y,
+                        z: cube.position.z
+                    }));
+                    return;
+                }
+
+                if (data.type === 'reset_code_result') {
+                    if (!data.success) {
+                        authStatus.textContent = 'Could not request a code for that account.';
+                        return;
+                    }
+                    authStatus.textContent = 'Request saved. Ask an administrator to send you the reset code.';
+                    return;
+                }
+
+                if (data.type === 'password_reset_result') {
+                    authStatus.textContent = data.success
+                        ? 'Password reset. Return to log in and use your new password.'
+                        : 'Password reset failed. Check the name, code, and password requirements.';
+                    return;
+                }
+
+                if (data.type === 'auth_error') {
+                    authStatus.textContent = data.message;
+                    return;
+                }
+
+                if (data.id === connection.playerId) return;
+
+                // AUTOMATIC GREETING REPLY
+                if (data.type === 'join') {
+                    connection.send(JSON.stringify({
+                        type: 'reply',
+                        id: connection.playerId,
+                        x: cube.position.x,
+                        y: cube.position.y,
+                        z: cube.position.z
+                    }));
+                }
+
+                // CLEAN DISCONNECT REMOVAL ACTION LOGIC
+                if (data.type === 'leave') {
+                    if (remotePlayers[data.id]) {
+                        scene.remove(remotePlayers[data.id]);
+                        remotePlayers[data.id].geometry.dispose();
+                        remotePlayers[data.id].material.dispose();
+                        delete remotePlayers[data.id];
+                    }
+                    return;
+                }
+
+                // Build or update the red cube for the other player
+                if (!remotePlayers[data.id]) {
+                    const remoteGeometry = new THREE.BoxGeometry(2, 2, 2);
+                    const remoteMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+                    remotePlayers[data.id] = new THREE.Mesh(remoteGeometry, remoteMaterial);
+                    scene.add(remotePlayers[data.id]);
+                }
+
+                // Map tracking fields to the proper 3D coordinates
+                remotePlayers[data.id].position.x = data.x;
+                remotePlayers[data.id].position.y = data.y;
+                remotePlayers[data.id].position.z = data.z !== undefined ? data.z : 0;
+            };
+
+            connection.onclose = function() {
+                if (socket !== connection) return;
+                if (isAuthenticated) {
+                    isAuthenticated = false;
+                    reloginRequired = true;
+                    authOverlay.hidden = false;
+                }
+                authStatus.textContent = 'Connection lost. Reconnecting to the game server...';
+                window.setTimeout(connectToServer, 3000);
+            };
+        }
+
+        connectToServer();
+        window.setInterval(() => {
+            sendAuthMessage({ type: 'check_version', version: APP_VERSION });
+        }, 30000);
+
+        document.getElementById('reload-update-button').addEventListener('click', () => {
+            window.location.reload();
+        });
+        document.getElementById('dismiss-update-button').addEventListener('click', () => {
+            dismissedUpdateVersion = availableUpdateVersion;
+            updateBanner.hidden = true;
+        });
 
         // Helper event emitter utility dispatching coordinates packet over the active connection network
         function broadcastMovement() {
@@ -225,95 +396,6 @@
             isGrounded = false;
             return true;
         }
-
-        // 5. LISTENING FOR SIGNALS FROM THE SERVER
-        socket.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-
-            if (data.type === 'account_names') {
-                resetName.replaceChildren(new Option('Choose your name', ''));
-                for (const name of data.names) {
-                    resetName.add(new Option(name, name));
-                }
-                return;
-            }
-
-            if (data.type === 'login_result') {
-                if (!data.success) {
-                    authStatus.textContent = 'Login failed. Check your name and password.';
-                    return;
-                }
-                isAuthenticated = true;
-                authOverlay.hidden = true;
-                authStatus.textContent = '';
-                socket.send(JSON.stringify({
-                    type: 'join',
-                    id: socket.playerId,
-                    x: cube.position.x,
-                    y: cube.position.y,
-                    z: cube.position.z
-                }));
-                return;
-            }
-
-            if (data.type === 'reset_code_result') {
-                if (!data.success) {
-                    authStatus.textContent = 'Could not request a code for that account.';
-                    return;
-                }
-                authStatus.textContent = 'Request saved. Ask an administrator to send you the reset code.';
-                return;
-            }
-
-            if (data.type === 'password_reset_result') {
-                authStatus.textContent = data.success
-                    ? 'Password reset. Return to log in and use your new password.'
-                    : 'Password reset failed. Check the name, code, and password requirements.';
-                return;
-            }
-
-            if (data.type === 'auth_error') {
-                authStatus.textContent = data.message;
-                return;
-            }
-
-            if (data.id === socket.playerId) return;
-
-            // AUTOMATIC GREETING REPLY
-            if (data.type === 'join') {
-                socket.send(JSON.stringify({
-                    type: 'reply',
-                    id: socket.playerId,
-                    x: cube.position.x,
-                    y: cube.position.y,
-                    z: cube.position.z
-                }));
-            }
-
-            // CLEAN DISCONNECT REMOVAL ACTION LOGIC
-            if (data.type === 'leave') {
-                if (remotePlayers[data.id]) {
-                    scene.remove(remotePlayers[data.id]);
-                    remotePlayers[data.id].geometry.dispose();
-                    remotePlayers[data.id].material.dispose();
-                    delete remotePlayers[data.id];
-                }
-                return;
-            }
-
-            // Build or update the red cube for the other player
-            if (!remotePlayers[data.id]) {
-                const remoteGeometry = new THREE.BoxGeometry(2, 2, 2);
-                const remoteMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
-                remotePlayers[data.id] = new THREE.Mesh(remoteGeometry, remoteMaterial);
-                scene.add(remotePlayers[data.id]);
-            }
-
-            // Map tracking fields to the proper 3D coordinates
-            remotePlayers[data.id].position.x = data.x;
-            remotePlayers[data.id].position.y = data.y;
-            remotePlayers[data.id].position.z = data.z !== undefined ? data.z : 0;
-        };
 
         document.getElementById('login-button').addEventListener('click', () => {
             authStatus.textContent = 'Checking login...';
