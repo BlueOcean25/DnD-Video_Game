@@ -81,6 +81,18 @@
             font: inherit;
             cursor: pointer;
         }
+        #version-label {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 11;
+            padding: 6px 9px;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 5px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            font-size: 12px;
+        }
 
         /* Touchscreen Joystick Outer Ring styling */
         #joystick-zone {
@@ -138,8 +150,8 @@
         <section id="auth-panel" aria-labelledby="auth-title">
             <h1 id="auth-title">Log in to play</h1>
             <div id="login-form">
-                <label for="login-name">Name</label>
-                <input id="login-name" autocomplete="name" required>
+                <label for="login-identifier">Name or username</label>
+                <input id="login-identifier" autocomplete="username" required>
                 <label for="login-password">Password</label>
                 <input id="login-password" type="password" autocomplete="current-password" required>
                 <button id="login-button" type="button">Log in</button>
@@ -162,6 +174,8 @@
             <p id="auth-status" role="status" aria-live="polite">Connecting to the game server...</p>
         </section>
     </div>
+
+    <div id="version-label">v0.5.2-alpha</div>
 
     <aside id="update-banner" hidden role="status" aria-live="polite">
         <span id="update-message"></span>
@@ -215,7 +229,7 @@
         scene.add(cube);
 
         // 4. PERSISTENT LIVE WEBSOCKET SERVER TUNNEL
-        const APP_VERSION = 'v0.5.2-alpha';
+        const APP_VERSION = 'v0.5.3-alpha';
         let socket;
         const remotePlayers = {};
         const authOverlay = document.getElementById('auth-overlay');
@@ -401,7 +415,7 @@
             authStatus.textContent = 'Checking login...';
             sendAuthMessage({
                 type: 'login',
-                name: document.getElementById('login-name').value.trim(),
+                identifier: document.getElementById('login-identifier').value.trim(),
                 password: document.getElementById('login-password').value
             });
         });
@@ -544,6 +558,13 @@
         }
         broadcastMovement(); // Share ongoing falling updates with peer networks
         }
+        const cameraTargetX = cube.position.x;
+        const cameraTargetY = cube.position.y + 7;
+        const cameraTargetZ = cube.position.z + 11;
+        camera.position.x += (cameraTargetX - camera.position.x) * 0.08;
+        camera.position.y += (cameraTargetY - camera.position.y) * 0.08;
+        camera.position.z += (cameraTargetZ - camera.position.z) * 0.08;
+        camera.lookAt(cube.position);
         // Continuous mesh presentation rotation
         cube.rotation.x += 0.005;
         cube.rotation.y += 0.005;

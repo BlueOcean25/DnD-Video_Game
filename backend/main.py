@@ -13,8 +13,21 @@ import websockets
 
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
-GAME_VERSION = "v0.5.2-alpha"
+LOG_FILE = Path(__file__).with_name("server.log")
+GAME_VERSION = "v0.5.3-alpha"
 connected_players = set()
+
+
+def configure_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+        force=True,
+    )
 
 
 def read_csv(path, required_fields):
@@ -58,17 +71,29 @@ def list_account_names():
     return [row[name_field] for row in accounts if row.get(name_field)]
 
 
-def authenticate(name, password):
+def authenticate(identifier, password):
     fieldnames, accounts = account_rows()
     name_field = next(field for field in fieldnames if field.lower() == "name")
-    account = next((row for row in accounts if row.get(name_field) == name), None)
+    username_field = next(
+        (field for field in fieldnames if field.lower() == "username"),
+        None,
+    )
+    matching_accounts = [
+        row
+        for row in accounts
+        if row.get(name_field) == identifier
+        or (username_field is not None and row.get(username_field) == identifier)
+    ]
+    if len(matching_accounts) != 1:
+        return False
+    account = matching_accounts[0]
     if account is None or not account.get("password_hash"):
         return False
 
     try:
         return bcrypt.checkpw(password.encode("utf-8"), account["password_hash"].encode("ascii"))
     except (UnicodeEncodeError, ValueError):
-        logging.warning("Invalid bcrypt hash or password encoding for account %s", name)
+        logging.warning("Invalid bcrypt hash or password encoding for account %s", identifier)
         return False
 
 
@@ -144,15 +169,18 @@ async def handle_auth_message(websocket, data):
                     "version": GAME_VERSION,
                 }))
         elif message_type == "login":
-            name = data.get("name", "")
+            identifier = data.get("identifier", "")
             password = data.get("password", "")
             valid = (
-                isinstance(name, str)
+                isinstance(identifier, str)
                 and isinstance(password, str)
-                and authenticate(name, password)
+                and authenticate(identifier, password)
             )
             if valid:
                 websocket.authenticated = True
+                logging.info("Login succeeded for account identifier %r", identifier)
+            else:
+                logging.warning("Login failed for account identifier %r", identifier)
             await websocket.send(json.dumps({
                 "type": "login_result",
                 "success": bool(valid),
@@ -160,6 +188,8 @@ async def handle_auth_message(websocket, data):
         elif message_type == "request_reset_code":
             name = data.get("name", "")
             code = create_reset_code(name) if isinstance(name, str) else None
+            if code is not None:
+                logging.info("Password reset code requested for account %r", name)
             await websocket.send(json.dumps({
                 "type": "reset_code_result",
                 "success": code is not None,
@@ -181,6 +211,10 @@ async def handle_auth_message(websocket, data):
                 if password_valid
                 else False
             )
+            if success:
+                logging.info("Password reset completed for account %r", name)
+            else:
+                logging.warning("Password reset failed for account %r", name)
             await websocket.send(json.dumps({
                 "type": "password_reset_result",
                 "success": success,
@@ -196,13 +230,14 @@ async def handler(websocket):
     connected_players.add(websocket)
     websocket.player_id = None
     websocket.authenticated = False
-    print(f"Player joined! Total: {len(connected_players)}")
+    logging.info("Client connected; active connections: %d", len(connected_players))
 
     try:
         async for message in websocket:
             try:
                 data = json.loads(message)
             except json.JSONDecodeError:
+                logging.warning("Rejected invalid JSON from client")
                 await send_auth_error(websocket, "Invalid message.")
                 continue
 
@@ -225,6 +260,8 @@ async def handler(websocket):
 
             if data.get("type") in ["join", "reply"] and "id" in data:
                 websocket.player_id = data["id"]
+                if data.get("type") == "join":
+                    logging.info("Player entered the game (player_id=%r)", websocket.player_id)
 
             for player in connected_players:
                 if player != websocket and player.authenticated:
@@ -234,7 +271,11 @@ async def handler(websocket):
         pass
     finally:
         connected_players.remove(websocket)
-        print(f"Player disconnected! Total: {len(connected_players)}")
+        logging.info(
+            "Client disconnected (player_id=%r); active connections: %d",
+            websocket.player_id,
+            len(connected_players),
+        )
 
         if websocket.player_id:
             leave_notification = {
@@ -250,8 +291,8 @@ async def handler(websocket):
 
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
-    print("Server running on port 10000...")
+    configure_logging()
+    logging.info("Game server starting on port 10000 (version %s)", GAME_VERSION)
     async with websockets.serve(handler, "0.0.0.0", 10000):
         await asyncio.Future()
 
