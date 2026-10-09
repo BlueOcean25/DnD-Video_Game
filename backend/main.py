@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import hmac
+import http
 import json
 import logging
 import secrets
@@ -14,7 +15,7 @@ import websockets
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.4-alpha"
+GAME_VERSION = "v0.5.5-alpha"
 connected_players = set()
 
 
@@ -290,12 +291,16 @@ async def handler(websocket):
                         pass
 
 
-async def main():
-    configure_logging()
-    logging.info("Game server starting on port 10000 (version %s)", GAME_VERSION)
-    async with websockets.serve(handler, "0.0.0.0", 10000):
-        await asyncio.Future()
+def health_check(connection, request):
+    if request.path == "/":
+        return connection.respond(http.HTTPStatus.OK, "OK\n")
 
+
+async def main():
+    log_event("Server running on port 10000...")
+    async with websockets.serve(handler, "0.0.0.0", 10000, process_request=health_check):
+        await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
+
