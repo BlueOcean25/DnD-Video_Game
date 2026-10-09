@@ -229,7 +229,7 @@
         scene.add(cube);
 
         // 4. PERSISTENT LIVE WEBSOCKET SERVER TUNNEL
-        const APP_VERSION = 'v0.5.3-alpha';
+        const APP_VERSION = 'v0.5.4-alpha';
         let socket;
         const remotePlayers = {};
         const authOverlay = document.getElementById('auth-overlay');
@@ -256,7 +256,6 @@
 
         function connectToServer() {
             const connection = new WebSocket('wss://dnd-video-game.onrender.com');
-            socket = connection;
             connection.playerId = playerId;
 
             connection.onopen = function() {

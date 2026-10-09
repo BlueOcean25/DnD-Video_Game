@@ -14,7 +14,7 @@ import websockets
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.3-alpha"
+GAME_VERSION = "v0.5.4-alpha"
 connected_players = set()
 
 
