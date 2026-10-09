@@ -110,8 +110,8 @@
         <section id="auth-panel" aria-labelledby="auth-title">
             <h1 id="auth-title">Log in to play</h1>
             <div id="login-form">
-                <label for="login-username">Username</label>
-                <input id="login-username" autocomplete="username" required>
+                <label for="login-name">Name</label>
+                <input id="login-name" autocomplete="name" required>
                 <label for="login-password">Password</label>
                 <input id="login-password" type="password" autocomplete="current-password" required>
                 <button id="login-button" type="button">Log in</button>
@@ -240,7 +240,7 @@
 
             if (data.type === 'login_result') {
                 if (!data.success) {
-                    authStatus.textContent = 'Login failed. Check your username and password.';
+                    authStatus.textContent = 'Login failed. Check your name and password.';
                     return;
                 }
                 isAuthenticated = true;
@@ -319,7 +319,7 @@
             authStatus.textContent = 'Checking login...';
             sendAuthMessage({
                 type: 'login',
-                username: document.getElementById('login-username').value.trim(),
+                name: document.getElementById('login-name').value.trim(),
                 password: document.getElementById('login-password').value
             });
         });

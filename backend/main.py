@@ -45,30 +45,36 @@ def write_csv(path, fieldnames, rows):
 
 
 def account_rows():
-    return read_csv(ACCOUNT_FILE, ("Name", "username", "password_hash"))
+    fieldnames, accounts = read_csv(ACCOUNT_FILE, ("password_hash",))
+    if not any(field.lower() == "name" for field in fieldnames):
+        raise ValueError(f"{ACCOUNT_FILE.name} is missing the account name column")
+    return fieldnames, accounts
 
 
 def list_account_names():
-    _, accounts = account_rows()
-    return [row["Name"] for row in accounts if row.get("Name")]
+    fieldnames, accounts = account_rows()
+    name_field = next(field for field in fieldnames if field.lower() == "name")
+    return [row[name_field] for row in accounts if row.get(name_field)]
 
 
-def authenticate(username, password):
-    _, accounts = account_rows()
-    account = next((row for row in accounts if row.get("username") == username), None)
+def authenticate(name, password):
+    fieldnames, accounts = account_rows()
+    name_field = next(field for field in fieldnames if field.lower() == "name")
+    account = next((row for row in accounts if row.get(name_field) == name), None)
     if account is None or not account.get("password_hash"):
         return False
 
     try:
         return bcrypt.checkpw(password.encode("utf-8"), account["password_hash"].encode("ascii"))
     except (UnicodeEncodeError, ValueError):
-        logging.warning("Invalid bcrypt hash or password encoding for account %s", username)
+        logging.warning("Invalid bcrypt hash or password encoding for account %s", name)
         return False
 
 
 def create_reset_code(name):
-    _, accounts = account_rows()
-    if not any(row.get("Name") == name for row in accounts):
+    fieldnames, accounts = account_rows()
+    name_field = next(field for field in fieldnames if field.lower() == "name")
+    if not any(row.get(name_field) == name for row in accounts):
         return None
 
     code = secrets.token_urlsafe(24)
@@ -86,7 +92,8 @@ def reset_password(name, code, password):
         return False
 
     account_fields, accounts = account_rows()
-    account = next((row for row in accounts if row.get("Name") == name), None)
+    name_field = next(field for field in account_fields if field.lower() == "name")
+    account = next((row for row in accounts if row.get(name_field) == name), None)
     if account is None:
         return False
 
@@ -129,12 +136,12 @@ async def handle_auth_message(websocket, data):
                 "names": list_account_names(),
             }))
         elif message_type == "login":
-            username = data.get("username", "")
+            name = data.get("name", "")
             password = data.get("password", "")
             valid = (
-                isinstance(username, str)
+                isinstance(name, str)
                 and isinstance(password, str)
-                and authenticate(username, password)
+                and authenticate(name, password)
             )
             if valid:
                 websocket.authenticated = True
