@@ -11,12 +11,13 @@ from pathlib import Path
 import bcrypt
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
+from websockets.server import ServerProtocol
 
 
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.7-alpha"
+GAME_VERSION = "v0.5.9-alpha"
 connected_players = set()
 
 
@@ -396,27 +397,31 @@ async def handle_tcp_request(reader, writer, websocket_port):
         await writer.wait_closed()
 
 
+class RenderFriendlyServerProtocol(ServerProtocol):
+    def parse(self):
+        # Read the raw opening data packets from the incoming stream
+        try:
+            return super().parse()
+        except ValueError as e:
+            # If Render hits us with a HEAD request, gracefully handle it instead of throwing an error
+            if "got HEAD" in str(e):
+                # Send a perfect 200 OK directly back into the live connection pipeline channel
+                self.write_http_response(http.HTTPStatus.OK, [("Content-Type", "text/plain")], b"OK\n")
+                # Safely terminate this temporary checker request without crashing the application engine
+                self.transport.close()
+            raise e
+
 async def main():
-    configure_logging()
-    port = int(os.environ.get("PORT", "10000"))
-    async with serve(
-        handler,
-        "127.0.0.1",
-        0,
-    ) as websocket_server:
-        websocket_port = websocket_server.sockets[0].getsockname()[1]
-        server = await asyncio.start_server(
-            lambda reader, writer: handle_tcp_request(
-                reader,
-                writer,
-                websocket_port,
-            ),
-            "0.0.0.0",
-            port,
-        )
-        logging.info("Server running on port %d (version %s)", port, GAME_VERSION)
-        async with server:
-            await asyncio.Future()
+    log_event("Server running on port 10000...")
+    
+    # Inject our custom RenderFriendlyServerProtocol into the serve engine
+    async with websockets.serve(
+        handler, 
+        "0.0.0.0", 
+        10000, 
+        create_protocol=RenderFriendlyServerProtocol
+    ):
+        await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
