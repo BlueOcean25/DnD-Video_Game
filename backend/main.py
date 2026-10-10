@@ -297,10 +297,10 @@ def health_check(connection, request):
 
 
 async def main():
-    log_event("Server running on port 10000...")
+    configure_logging()
+    logging.info("Server running on port 10000 (version %s)", GAME_VERSION)
     async with websockets.serve(handler, "0.0.0.0", 10000, process_request=health_check):
         await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
-
