@@ -175,7 +175,7 @@
         </section>
     </div>
 
-    <div id="version-label">v0.5.2-alpha</div>
+    <div id="version-label">APP_VERSION</div>
 
     <aside id="update-banner" hidden role="status" aria-live="polite">
         <span id="update-message"></span>
@@ -229,7 +229,8 @@
         scene.add(cube);
 
         // 4. PERSISTENT LIVE WEBSOCKET SERVER TUNNEL
-        const APP_VERSION = 'v0.5.5-alpha';
+        const APP_VERSION = 'v0.5.7-alpha';
+        document.getElementById('version-label').textContent = APP_VERSION;
         let socket;
         const remotePlayers = {};
         const authOverlay = document.getElementById('auth-overlay');

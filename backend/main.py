@@ -1,21 +1,22 @@
 import asyncio
 import csv
 import hmac
-import http
 import json
 import logging
+import os
 import secrets
 import tempfile
 from pathlib import Path
 
 import bcrypt
-import websockets
+from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
 
 
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.5-alpha"
+GAME_VERSION = "v0.5.7-alpha"
 connected_players = set()
 
 
@@ -234,9 +235,13 @@ async def handler(websocket):
     logging.info("Client connected; active connections: %d", len(connected_players))
 
     try:
-        async for message in websocket:
+        async for websocket_message in websocket:
+            if not isinstance(websocket_message, str):
+                await send_auth_error(websocket, "Invalid message.")
+                continue
+
             try:
-                data = json.loads(message)
+                data = json.loads(websocket_message)
             except json.JSONDecodeError:
                 logging.warning("Rejected invalid JSON from client")
                 await send_auth_error(websocket, "Invalid message.")
@@ -266,12 +271,10 @@ async def handler(websocket):
 
             for player in connected_players:
                 if player != websocket and player.authenticated:
-                    await player.send(json.dumps(data))
+                    await send_game_message(player, json.dumps(data))
 
-    except websockets.ConnectionClosed:
-        pass
     finally:
-        connected_players.remove(websocket)
+        connected_players.discard(websocket)
         logging.info(
             "Client disconnected (player_id=%r); active connections: %d",
             websocket.player_id,
@@ -285,22 +288,135 @@ async def handler(websocket):
             }
             for player in connected_players:
                 if player.authenticated:
-                    try:
-                        await player.send(json.dumps(leave_notification))
-                    except websockets.ConnectionClosed:
-                        pass
+                    await send_game_message(player, json.dumps(leave_notification))
 
 
-def health_check(connection, request):
-    if request.path == "/":
-        return connection.respond(http.HTTPStatus.OK, "OK\n")
+async def send_game_message(websocket, message):
+    try:
+        await websocket.send(message)
+    except ConnectionClosed:
+        logging.warning("Unable to send game message to a closing WebSocket")
+
+
+async def relay_stream(reader, writer):
+    try:
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+    except (ConnectionError, OSError):
+        pass
+    finally:
+        writer.close()
+
+
+async def handle_tcp_request(reader, writer, websocket_port):
+    upstream_writer = None
+    try:
+        request_head = await asyncio.wait_for(
+            reader.readuntil(b"\r\n\r\n"),
+            timeout=10,
+        )
+        request_line, *header_lines = request_head.split(b"\r\n")
+        method, path, _ = request_line.decode("ascii").split(" ", 2)
+        headers = {}
+        for line in header_lines:
+            if not line:
+                continue
+            name, value = line.split(b":", 1)
+            headers[name.decode("ascii").lower()] = value.decode("ascii").strip()
+
+        is_websocket = (
+            method == "GET"
+            and path == "/"
+            and headers.get("upgrade", "").lower() == "websocket"
+            and any(
+                token.strip().lower() == "upgrade"
+                for token in headers.get("connection", "").split(",")
+            )
+        )
+        if method == "HEAD" and path == "/":
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/plain; charset=utf-8\r\n"
+                b"Content-Length: 3\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            await writer.drain()
+            return
+        if method == "GET" and path == "/" and not is_websocket:
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/plain; charset=utf-8\r\n"
+                b"Content-Length: 3\r\n"
+                b"Connection: close\r\n\r\n"
+                b"OK\n"
+            )
+            await writer.drain()
+            return
+        if not is_websocket:
+            writer.write(
+                b"HTTP/1.1 404 Not Found\r\n"
+                b"Content-Length: 0\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            await writer.drain()
+            return
+
+        upstream_reader, upstream_writer = await asyncio.open_connection(
+            "127.0.0.1",
+            websocket_port,
+        )
+        upstream_writer.write(request_head)
+        await upstream_writer.drain()
+        to_websocket = asyncio.create_task(
+            relay_stream(reader, upstream_writer)
+        )
+        to_client = asyncio.create_task(relay_stream(upstream_reader, writer))
+        done, pending = await asyncio.wait(
+            {to_websocket, to_client},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*done, *pending, return_exceptions=True)
+    except (
+        asyncio.IncompleteReadError,
+        asyncio.LimitOverrunError,
+        UnicodeError,
+        ValueError,
+        OSError,
+        asyncio.TimeoutError,
+    ):
+        logging.warning("Rejected malformed or incomplete HTTP request")
+    finally:
+        if upstream_writer is not None:
+            upstream_writer.close()
+            await upstream_writer.wait_closed()
+        writer.close()
+        await writer.wait_closed()
 
 
 async def main():
     configure_logging()
-    logging.info("Server running on port 10000 (version %s)", GAME_VERSION)
-    async with websockets.serve(handler, "0.0.0.0", 10000, process_request=health_check):
-        await asyncio.Future()
+    port = int(os.environ.get("PORT", "10000"))
+    async with serve(
+        handler,
+        "127.0.0.1",
+        0,
+    ) as websocket_server:
+        websocket_port = websocket_server.sockets[0].getsockname()[1]
+        server = await asyncio.start_server(
+            lambda reader, writer: handle_tcp_request(
+                reader,
+                writer,
+                websocket_port,
+            ),
+            "0.0.0.0",
+            port,
+        )
+        logging.info("Server running on port %d (version %s)", port, GAME_VERSION)
+        async with server:
+            await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
