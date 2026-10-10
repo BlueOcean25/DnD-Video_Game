@@ -16,7 +16,7 @@ from websockets.exceptions import ConnectionClosed
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.11-alpha"
+GAME_VERSION = "v0.5.12-alpha"
 connected_players = set()
 
 
@@ -334,6 +334,7 @@ async def handle_tcp_request(reader, writer, websocket_port):
                 for token in headers.get("connection", "").split(",")
             )
         )
+        is_health_check = method == "GET" and path == "/healthz"
         if method == "GET" and path == "/" and not is_websocket:
             writer.write(
                 b"HTTP/1.1 200 OK\r\n"
@@ -344,7 +345,7 @@ async def handle_tcp_request(reader, writer, websocket_port):
             )
             await writer.drain()
             return
-        if not is_websocket:
+        if not is_websocket and not is_health_check:
             writer.write(
                 b"HTTP/1.1 404 Not Found\r\n"
                 b"Content-Length: 0\r\n"
@@ -387,10 +388,20 @@ async def handle_tcp_request(reader, writer, websocket_port):
         await writer.wait_closed()
 
 
+def health_check(connection, request):
+    if request.path == "/healthz":
+        return connection.respond(200, "OK\n")
+
+
 async def main():
     configure_logging()
     port = int(os.environ.get("PORT", "10000"))
-    async with serve(handler, "127.0.0.1", 0) as websocket_server:
+    async with serve(
+        handler,
+        "127.0.0.1",
+        0,
+        process_request=health_check,
+    ) as websocket_server:
         websocket_port = websocket_server.sockets[0].getsockname()[1]
         server = await asyncio.start_server(
             lambda reader, writer: handle_tcp_request(
