@@ -17,7 +17,7 @@ from websockets.exceptions import ConnectionClosed
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.14-alpha"
+GAME_VERSION = "v0.5.15-alpha"
 connected_players = set()
 
 
@@ -404,26 +404,15 @@ def health_check(connection, request):
 
 async def main():
     configure_logging()
-    port = int(os.environ.get("PORT", "10000"))
+    logging.info("Server running on port 10000...")
+
     async with serve(
         handler,
-        "127.0.0.1",
-        0,
+        "0.0.0.0",
+        10000,
         process_request=health_check,
-    ) as websocket_server:
-        websocket_port = websocket_server.sockets[0].getsockname()[1]
-        server = await asyncio.start_server(
-            lambda reader, writer: handle_tcp_request(
-                reader,
-                writer,
-                websocket_port,
-            ),
-            "0.0.0.0",
-            port,
-        )
-        logging.info("Server running on port %d (version %s)", port, GAME_VERSION)
-        async with server:
-            await asyncio.Future()
+    ):
+        await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
