@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import http
 import hmac
 import json
 import logging
@@ -16,7 +17,7 @@ from websockets.exceptions import ConnectionClosed
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.12-alpha"
+GAME_VERSION = "v0.5.14-alpha"
 connected_players = set()
 
 
@@ -335,6 +336,14 @@ async def handle_tcp_request(reader, writer, websocket_port):
             )
         )
         is_health_check = method == "GET" and path == "/healthz"
+        if method == "HEAD" and path in {"/", "/healthz"}:
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Length: 3\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            await writer.drain()
+            return
         if method == "GET" and path == "/" and not is_websocket:
             writer.write(
                 b"HTTP/1.1 200 OK\r\n"
@@ -390,7 +399,7 @@ async def handle_tcp_request(reader, writer, websocket_port):
 
 def health_check(connection, request):
     if request.path == "/healthz":
-        return connection.respond(200, "OK\n")
+        return connection.respond(http.HTTPStatus.OK, "OK\n")
 
 
 async def main():
