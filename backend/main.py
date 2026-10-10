@@ -16,7 +16,7 @@ from websockets.exceptions import ConnectionClosed
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.10-alpha"
+GAME_VERSION = "v0.5.11-alpha"
 connected_players = set()
 
 
@@ -334,15 +334,6 @@ async def handle_tcp_request(reader, writer, websocket_port):
                 for token in headers.get("connection", "").split(",")
             )
         )
-        if method == "HEAD" and path == "/":
-            writer.write(
-                b"HTTP/1.1 200 OK\r\n"
-                b"Content-Type: text/plain; charset=utf-8\r\n"
-                b"Content-Length: 3\r\n"
-                b"Connection: close\r\n\r\n"
-            )
-            await writer.drain()
-            return
         if method == "GET" and path == "/" and not is_websocket:
             writer.write(
                 b"HTTP/1.1 200 OK\r\n"
