@@ -1,6 +1,5 @@
 import asyncio
 import csv
-import http
 import hmac
 import json
 import logging
@@ -17,7 +16,7 @@ from websockets.exceptions import ConnectionClosed
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.16-alpha"
+GAME_VERSION = "v0.5.17-alpha"
 connected_players = set()
 
 
@@ -335,26 +334,20 @@ async def handle_tcp_request(reader, writer, websocket_port):
                 for token in headers.get("connection", "").split(",")
             )
         )
-        is_health_check = method == "GET" and path == "/healthz"
-        if method == "HEAD" and path in {"/", "/healthz"}:
-            writer.write(
-                b"HTTP/1.1 200 OK\r\n"
-                b"Content-Length: 3\r\n"
-                b"Connection: close\r\n\r\n"
-            )
-            await writer.drain()
-            return
-        if method == "GET" and path == "/" and not is_websocket:
+        if method in {"GET", "HEAD"} and path in {"/", "/healthz"} and not is_websocket:
+            body = b"OK\n" if method == "GET" else b""
             writer.write(
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: text/plain; charset=utf-8\r\n"
-                b"Content-Length: 3\r\n"
-                b"Connection: close\r\n\r\n"
-                b"OK\n"
+                + b"Content-Length: "
+                + str(3).encode("ascii")
+                + b"\r\n"
+                + b"Connection: close\r\n\r\n"
+                + body
             )
             await writer.drain()
             return
-        if not is_websocket and not is_health_check:
+        if not is_websocket:
             writer.write(
                 b"HTTP/1.1 404 Not Found\r\n"
                 b"Content-Length: 0\r\n"
@@ -397,83 +390,25 @@ async def handle_tcp_request(reader, writer, websocket_port):
         await writer.wait_closed()
 
 
-async def handle_health_request(reader, writer):
-    try:
-        request_head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=3)
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-        writer.close()
-        await writer.wait_closed()
-        return
-
-    request_line = request_head.split(b"\r\n", 1)[0].decode("ascii", "replace")
-    try:
-        method, path, _ = request_line.split(" ")
-    except ValueError:
-        response = (
-            b"HTTP/1.1 400 Bad Request\r\n"
-            b"Content-Length: 0\r\n"
-            b"Connection: close\r\n\r\n"
-        )
-        writer.write(response)
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
-        return
-
-    if method in {"GET", "HEAD"} and path in {"/", "/healthz"}:
-        body = b"OK\n" if method == "GET" else b""
-        response = (
-            b"HTTP/1.1 200 OK\r\n"
-            b"Content-Type: text/plain; charset=utf-8\r\n"
-            + b"Content-Length: "
-            + str(len(body)).encode("ascii")
-            + b"\r\n"
-            + b"Connection: close\r\n\r\n"
-            + body
-        )
-        writer.write(response)
-        await writer.drain()
-    else:
-        response = (
-            b"HTTP/1.1 404 Not Found\r\n"
-            b"Content-Length: 0\r\n"
-            b"Connection: close\r\n\r\n"
-        )
-        writer.write(response)
-        await writer.drain()
-
-    writer.close()
-    await writer.wait_closed()
-
-
-async def health_server(host, port):
-    server = await asyncio.start_server(handle_health_request, host, port)
-    async with server:
-        await server.serve_forever()
-
-
 async def main():
     configure_logging()
 
     host = "0.0.0.0"
-    websocket_port = int(os.environ.get("PORT", "10000"))
-    health_port = int(os.environ.get("HEALTH_PORT", "8080"))
+    public_port = int(os.environ.get("PORT", "10000"))
 
-    if websocket_port == health_port:
-        logging.warning(
-            "HEALTH_PORT matches the WebSocket port; health checks must use a different port "
-            "or a GET-only probe. websockets only accepts upgrade GET requests."
-        )
-
-    logging.info("Server running on WebSocket port %s", websocket_port)
-    logging.info("Health checks available on port %s", health_port)
-
-    async with serve(
-        handler,
-        host,
-        websocket_port,
-    ):
-        await health_server(host, health_port)
+    async with serve(handler, "127.0.0.1", 0) as websocket_server:
+        websocket_port = websocket_server.sockets[0].getsockname()[1]
+        logging.info("Server running on port %s", public_port)
+        async with await asyncio.start_server(
+            lambda reader, writer: handle_tcp_request(
+                reader,
+                writer,
+                websocket_port,
+            ),
+            host,
+            public_port,
+        ) as public_server:
+            await public_server.serve_forever()
 
 if __name__ == "__main__":
     asyncio.run(main())
