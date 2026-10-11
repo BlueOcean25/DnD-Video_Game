@@ -16,7 +16,7 @@ from websockets.exceptions import ConnectionClosed
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.19-alpha"
+GAME_VERSION = "v0.5.20-alpha"
 connected_players = set()
 
 
@@ -89,7 +89,7 @@ def authenticate(identifier, password):
     if len(matching_accounts) != 1:
         return False
     account = matching_accounts[0]
-    if account is None or not account.get("password_hash"):
+    if not account.get("password_hash"):
         return False
 
     try:
@@ -221,11 +221,9 @@ async def handle_auth_message(websocket, data):
                 "type": "password_reset_result",
                 "success": success,
             }))
-        return True
     except (OSError, csv.Error, UnicodeError, ValueError):
         logging.exception("Account operation failed")
         await send_auth_error(websocket, "The account request could not be completed.")
-        return True
 
 
 async def handler(websocket):
@@ -264,7 +262,7 @@ async def handler(websocket):
             if not websocket.authenticated:
                 continue
 
-            if data.get("type") in ["join", "reply"] and "id" in data:
+            if data.get("type") in {"join", "reply"} and "id" in data:
                 websocket.player_id = data["id"]
                 if data.get("type") == "join":
                     logging.info("Player entered the game (player_id=%r)", websocket.player_id)
@@ -309,6 +307,18 @@ async def relay_stream(reader, writer):
         writer.close()
 
 
+def health_response(method):
+    body = b"OK\n"
+    response_body = body if method == "GET" else b""
+    return (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        + f"Content-Length: {len(body)}\r\n".encode("ascii")
+        + b"Connection: close\r\n\r\n"
+        + response_body
+    )
+
+
 async def handle_tcp_request(reader, writer, websocket_port):
     upstream_writer = None
     try:
@@ -318,6 +328,12 @@ async def handle_tcp_request(reader, writer, websocket_port):
         )
         request_line, *header_lines = request_head.split(b"\r\n")
         method, path, _ = request_line.decode("ascii").split(" ", 2)
+
+        if method == "HEAD" and path in {"/", "/healthz"}:
+            writer.write(health_response(method))
+            await writer.drain()
+            return
+
         headers = {}
         for line in header_lines:
             if not line:
@@ -334,17 +350,12 @@ async def handle_tcp_request(reader, writer, websocket_port):
                 for token in headers.get("connection", "").split(",")
             )
         )
-        if method in {"GET", "HEAD"} and path in {"/", "/healthz"} and not is_websocket:
-            body = b"OK\n" if method == "GET" else b""
-            writer.write(
-                b"HTTP/1.1 200 OK\r\n"
-                b"Content-Type: text/plain; charset=utf-8\r\n"
-                + b"Content-Length: "
-                + str(3).encode("ascii")
-                + b"\r\n"
-                + b"Connection: close\r\n\r\n"
-                + body
-            )
+        if method == "GET" and path == "/healthz":
+            writer.write(health_response(method))
+            await writer.drain()
+            return
+        if method == "GET" and path == "/" and not is_websocket:
+            writer.write(health_response(method))
             await writer.drain()
             return
         if not is_websocket:
@@ -392,25 +403,22 @@ async def handle_tcp_request(reader, writer, websocket_port):
 
 async def main():
     configure_logging()
-    
+
     host = "0.0.0.0"
     public_port = int(os.environ.get("PORT", "10000"))
-    
+
     async with serve(handler, "127.0.0.1", 0) as websocket_server:
         websocket_port = websocket_server.sockets[0].getsockname()[1]
         logging.info("Server running on port %s", public_port)
-        
+
         public_server = await asyncio.start_server(
             lambda r, w: handle_tcp_request(r, w, websocket_port),
             host,
-            public_port
+            public_port,
         )
-        
+
         async with public_server:
             await public_server.serve_forever()
-
-if __name__ == "__main__":
-    asyncio.run(main())
 
 
 if __name__ == "__main__":
