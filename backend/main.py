@@ -3,6 +3,7 @@ import csv
 import hmac
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import secrets
 import tempfile
@@ -13,7 +14,9 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 
-ACCOUNT_FILE = Path(__file__).with_name("account.csv")
+ACCOUNT_FILE = Path(
+    os.environ.get("ACCOUNT_FILE", Path(__file__).with_name("account.csv"))
+)
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
 GAME_VERSION = "v0.5.21-alpha"
@@ -25,7 +28,12 @@ def configure_logging():
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[
-            logging.FileHandler(LOG_FILE, encoding="utf-8"),
+            RotatingFileHandler(
+                LOG_FILE,
+                maxBytes=1_000_000,
+                backupCount=3,
+                encoding="utf-8",
+            ),
             logging.StreamHandler(),
         ],
         force=True,
