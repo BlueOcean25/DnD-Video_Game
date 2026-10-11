@@ -16,7 +16,7 @@ from websockets.exceptions import ConnectionClosed
 ACCOUNT_FILE = Path(__file__).with_name("account.csv")
 CODES_FILE = Path(__file__).with_name("codes.csv")
 LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.20-alpha"
+GAME_VERSION = "v0.5.21-alpha"
 connected_players = set()
 
 
