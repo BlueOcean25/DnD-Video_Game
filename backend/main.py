@@ -14,12 +14,13 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 
-ACCOUNT_FILE = Path(
-    os.environ.get("ACCOUNT_FILE", Path(__file__).with_name("account.csv"))
+BACKEND_DIR = Path(__file__).resolve().parent
+ACCOUNT_FILE = Path(os.environ.get("ACCOUNT_FILE", BACKEND_DIR / "account.csv"))
+CODES_FILE = Path(
+    os.environ.get("CODES_FILE", BACKEND_DIR / "codes.csv")
 )
-CODES_FILE = Path(__file__).with_name("codes.csv")
-LOG_FILE = Path(__file__).with_name("server.log")
-GAME_VERSION = "v0.5.21-alpha"
+LOG_FILE = BACKEND_DIR / "server.log"
+GAME_VERSION = "v0.5.23-alpha"
 connected_players = set()
 
 
@@ -75,6 +76,16 @@ def account_rows():
     return fieldnames, accounts
 
 
+def csv_field(fieldnames, expected_name, path):
+    field = next(
+        (field for field in fieldnames if field.lower() == expected_name.lower()),
+        None,
+    )
+    if field is None:
+        raise ValueError(f"{path.name} is missing the {expected_name} column")
+    return field
+
+
 def list_account_names():
     fieldnames, accounts = account_rows()
     name_field = next(field for field in fieldnames if field.lower() == "name")
@@ -107,6 +118,35 @@ def authenticate(identifier, password):
         return False
 
 
+def change_password(identifier, current_password, new_password):
+    if len(new_password) < 8 or len(new_password.encode("utf-8")) > 72:
+        return False
+    if not authenticate(identifier, current_password):
+        return False
+
+    fieldnames, accounts = account_rows()
+    name_field = next(field for field in fieldnames if field.lower() == "name")
+    username_field = next(
+        (field for field in fieldnames if field.lower() == "username"),
+        None,
+    )
+    matching_accounts = [
+        row
+        for row in accounts
+        if row.get(name_field) == identifier
+        or (username_field is not None and row.get(username_field) == identifier)
+    ]
+    if len(matching_accounts) != 1:
+        return False
+
+    matching_accounts[0]["password_hash"] = bcrypt.hashpw(
+        new_password.encode("utf-8"),
+        bcrypt.gensalt(),
+    ).decode("ascii")
+    write_csv(ACCOUNT_FILE, fieldnames, accounts)
+    return True
+
+
 def create_reset_code(name):
     fieldnames, accounts = account_rows()
     name_field = next(field for field in fieldnames if field.lower() == "name")
@@ -115,10 +155,16 @@ def create_reset_code(name):
 
     code = secrets.token_urlsafe(24)
     if CODES_FILE.exists():
-        fieldnames, codes = read_csv(CODES_FILE, ("Name", "Code"))
+        fieldnames, codes = read_csv(CODES_FILE, ())
     else:
         fieldnames, codes = ["Name", "Code"], []
-    codes.append({**{field: "" for field in fieldnames}, "Name": name, "Code": code})
+    name_field = csv_field(fieldnames, "Name", CODES_FILE)
+    code_field = csv_field(fieldnames, "Code", CODES_FILE)
+    codes.append({
+        **{field: "" for field in fieldnames},
+        name_field: name,
+        code_field: code,
+    })
     write_csv(CODES_FILE, fieldnames, codes)
     return code
 
@@ -133,14 +179,16 @@ def reset_password(name, code, password):
     if account is None:
         return False
 
-    code_fields, codes = read_csv(CODES_FILE, ("Name", "Code"))
+    code_fields, codes = read_csv(CODES_FILE, ())
+    code_name_field = csv_field(code_fields, "Name", CODES_FILE)
+    code_value_field = csv_field(code_fields, "Code", CODES_FILE)
     matching_code_index = next(
         (
             index
             for index, row in enumerate(codes)
-            if row.get("Name") == name
+            if row.get(code_name_field) == name
             and hmac.compare_digest(
-                (row.get("Code") or "").encode("utf-8"),
+                (row.get(code_value_field) or "").encode("utf-8"),
                 code.encode("utf-8"),
             )
         ),
@@ -188,12 +236,44 @@ async def handle_auth_message(websocket, data):
             )
             if valid:
                 websocket.authenticated = True
+                websocket.account_identifier = identifier
                 logging.info("Login succeeded for account identifier %r", identifier)
             else:
                 logging.warning("Login failed for account identifier %r", identifier)
             await websocket.send(json.dumps({
                 "type": "login_result",
                 "success": bool(valid),
+            }))
+        elif message_type == "change_password":
+            current_password = data.get("current_password", "")
+            new_password = data.get("new_password", "")
+            valid_fields = all(
+                isinstance(value, str)
+                for value in (current_password, new_password)
+            )
+            success = (
+                websocket.authenticated
+                and isinstance(websocket.account_identifier, str)
+                and valid_fields
+                and change_password(
+                    websocket.account_identifier,
+                    current_password,
+                    new_password,
+                )
+            )
+            if success:
+                logging.info(
+                    "Password changed for account identifier %r",
+                    websocket.account_identifier,
+                )
+            else:
+                logging.warning(
+                    "Password change failed for account identifier %r",
+                    getattr(websocket, "account_identifier", None),
+                )
+            await websocket.send(json.dumps({
+                "type": "change_password_result",
+                "success": bool(success),
             }))
         elif message_type == "request_reset_code":
             name = data.get("name", "")
@@ -238,6 +318,7 @@ async def handler(websocket):
     connected_players.add(websocket)
     websocket.player_id = None
     websocket.authenticated = False
+    websocket.account_identifier = None
     logging.info("Client connected; active connections: %d", len(connected_players))
 
     try:
@@ -261,6 +342,7 @@ async def handler(websocket):
                 "get_account_names",
                 "check_version",
                 "login",
+                "change_password",
                 "request_reset_code",
                 "reset_password",
             }:

@@ -53,6 +53,50 @@
         #auth-status {
             overflow-wrap: anywhere;
         }
+        #settings-toggle {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            z-index: 12;
+            padding: 8px 12px;
+            font: inherit;
+            cursor: pointer;
+        }
+        #settings-toggle[hidden],
+        #settings-panel[hidden] {
+            display: none;
+        }
+        #settings-panel {
+            position: fixed;
+            top: 56px;
+            right: 12px;
+            z-index: 12;
+            box-sizing: border-box;
+            width: min(92vw, 360px);
+            padding: 20px;
+            border: 1px solid #666;
+            border-radius: 8px;
+            background: #222;
+            color: white;
+        }
+        #settings-panel h2 {
+            margin-top: 0;
+        }
+        #settings-panel input,
+        #settings-panel button {
+            box-sizing: border-box;
+            display: block;
+            width: 100%;
+            margin-top: 12px;
+            padding: 10px;
+            font: inherit;
+        }
+        #settings-panel button {
+            cursor: pointer;
+        }
+        #settings-status {
+            overflow-wrap: anywhere;
+        }
         #update-banner {
             position: fixed;
             top: 12px;
@@ -176,6 +220,23 @@
     </div>
 
     <div id="version-label"></div>
+    <button id="settings-toggle" type="button" hidden aria-expanded="false" aria-controls="settings-panel">
+        Settings
+    </button>
+    <section id="settings-panel" hidden role="dialog" aria-modal="false" aria-labelledby="settings-title">
+        <h2 id="settings-title">Settings</h2>
+        <form id="change-password-form">
+            <label for="current-password">Current password</label>
+            <input id="current-password" type="password" autocomplete="current-password" required>
+            <label for="settings-new-password">New password (8–72 UTF-8 bytes)</label>
+            <input id="settings-new-password" type="password" autocomplete="new-password" required>
+            <label for="confirm-password">Confirm new password</label>
+            <input id="confirm-password" type="password" autocomplete="new-password" required>
+            <button type="submit">Change password</button>
+        </form>
+        <p id="settings-status" role="status" aria-live="polite"></p>
+        <button id="close-settings-button" type="button">Close settings</button>
+    </section>
 
     <aside id="update-banner" hidden role="status" aria-live="polite">
         <span id="update-message"></span>
@@ -229,7 +290,7 @@
         scene.add(cube);
 
         // 4. PERSISTENT LIVE WEBSOCKET SERVER TUNNEL
-        const APP_VERSION = 'v0.5.21-alpha';
+        const APP_VERSION = 'v0.5.23-alpha';
         document.getElementById('version-label').textContent = APP_VERSION;
         let socket;
         const remotePlayers = {};
@@ -238,6 +299,9 @@
         const resetForm = document.getElementById('reset-form');
         const authStatus = document.getElementById('auth-status');
         const resetName = document.getElementById('reset-name');
+        const settingsToggle = document.getElementById('settings-toggle');
+        const settingsPanel = document.getElementById('settings-panel');
+        const settingsStatus = document.getElementById('settings-status');
         const updateBanner = document.getElementById('update-banner');
         const updateMessage = document.getElementById('update-message');
         let isAuthenticated = false;
@@ -249,14 +313,17 @@
 
         function sendAuthMessage(data) {
             if (!socket || socket.readyState !== WebSocket.OPEN) {
-                authStatus.textContent = 'The game server is not connected. Please try again.';
+                const status = settingsPanel.hidden ? authStatus : settingsStatus;
+                status.textContent = 'The game server is not connected. Please try again.';
                 return;
             }
             socket.send(JSON.stringify(data));
         }
 
         function connectToServer() {
-            const connection = new WebSocket('wss://dnd-video-game.onrender.com');
+            const connection = new WebSocket(
+                'wss://fluffy-space-fortnight-g4pjw54x6rprhwwwr.github.dev'
+            );
             connection.playerId = playerId;
             socket = connection;
 
@@ -297,6 +364,7 @@
                     isAuthenticated = true;
                     reloginRequired = false;
                     authOverlay.hidden = true;
+                    settingsToggle.hidden = false;
                     authStatus.textContent = '';
                     connection.send(JSON.stringify({
                         type: 'join',
@@ -324,8 +392,23 @@
                     return;
                 }
 
+                if (data.type === 'change_password_result') {
+                    if (data.success) {
+                        document.getElementById('change-password-form').reset();
+                        settingsStatus.textContent = 'Password changed successfully.';
+                    } else {
+                        settingsStatus.textContent =
+                            'Password change failed. Check your current password and new password requirements.';
+                    }
+                    return;
+                }
+
                 if (data.type === 'auth_error') {
-                    authStatus.textContent = data.message;
+                    if (!settingsPanel.hidden) {
+                        settingsStatus.textContent = data.message;
+                    } else {
+                        authStatus.textContent = data.message;
+                    }
                     return;
                 }
 
@@ -373,6 +456,10 @@
                     isAuthenticated = false;
                     reloginRequired = true;
                     authOverlay.hidden = false;
+                    settingsToggle.hidden = true;
+                    settingsPanel.hidden = true;
+                    settingsToggle.setAttribute('aria-expanded', 'false');
+                    document.getElementById('change-password-form').reset();
                 }
                 authStatus.textContent = 'Connection lost. Reconnecting to the game server...';
                 window.setTimeout(connectToServer, 3000);
@@ -390,6 +477,39 @@
         document.getElementById('dismiss-update-button').addEventListener('click', () => {
             dismissedUpdateVersion = availableUpdateVersion;
             updateBanner.hidden = true;
+        });
+        settingsToggle.addEventListener('click', () => {
+            settingsPanel.hidden = !settingsPanel.hidden;
+            settingsToggle.setAttribute('aria-expanded', String(!settingsPanel.hidden));
+            if (!settingsPanel.hidden) {
+                settingsStatus.textContent = '';
+                document.getElementById('current-password').focus();
+            }
+        });
+        document.getElementById('close-settings-button').addEventListener('click', () => {
+            settingsPanel.hidden = true;
+            settingsToggle.setAttribute('aria-expanded', 'false');
+            document.getElementById('change-password-form').reset();
+        });
+        document.getElementById('change-password-form').addEventListener('submit', (event) => {
+            event.preventDefault();
+            const newPassword = document.getElementById('settings-new-password').value;
+            const confirmation = document.getElementById('confirm-password').value;
+            if (newPassword.length < 8 || new TextEncoder().encode(newPassword).length > 72) {
+                settingsStatus.textContent =
+                    'Choose a new password between 8 and 72 UTF-8 bytes.';
+                return;
+            }
+            if (newPassword !== confirmation) {
+                settingsStatus.textContent = 'The new passwords do not match.';
+                return;
+            }
+            sendAuthMessage({
+                type: 'change_password',
+                current_password: document.getElementById('current-password').value,
+                new_password: newPassword
+            });
+            settingsStatus.textContent = 'Updating password...';
         });
 
         // Helper event emitter utility dispatching coordinates packet over the active connection network
@@ -458,6 +578,10 @@
         // 6. LAPTOP & COMPUTER ARROW KEYBOARD INPUTS
         window.addEventListener('keydown', (event) => {
             if (!isAuthenticated) return;
+            if (event.target instanceof HTMLElement
+                && event.target.matches('input, textarea, select, button, [contenteditable="true"]')) {
+                return;
+            }
             let moved = false;
 
             // X & Z movement handles translation across flat ground terrain
