@@ -108,6 +108,17 @@ def write_csv(path, fieldnames, rows):
             temporary_path.unlink()
 
 
+def write_synced_csv(path, fieldnames, rows):
+    try:
+        write_csv(path, fieldnames, rows)
+    except OSError as error:
+        logging.warning(
+            "Could not refresh CSV mirror %s: %s. Neon remains authoritative.",
+            path,
+            error,
+        )
+
+
 def csv_data_files():
     protected_paths = {ACCOUNT_FILE.resolve(), CODES_FILE.resolve()}
     return sorted(
@@ -341,7 +352,7 @@ def sync_csv_files_from_database():
                 {field: row[column_map[field]] or "" for field in fieldnames}
                 for row in rows
             ]
-            write_csv(local_files[entry["file_name"]], fieldnames, csv_rows)
+            write_synced_csv(local_files[entry["file_name"]], fieldnames, csv_rows)
 
 
 def account_rows():
@@ -442,7 +453,7 @@ def sync_accounts_to_csv():
                 row[matching_field] = value
         csv_accounts.append(row)
 
-    write_csv(ACCOUNT_FILE, fieldnames, csv_accounts)
+    write_synced_csv(ACCOUNT_FILE, fieldnames, csv_accounts)
 
 
 def push_accounts_to_database():
@@ -585,7 +596,7 @@ def sync_codes_to_csv():
         fieldnames = ["Name", "Code"]
         name_field, code_field = "Name", "Code"
 
-    write_csv(
+    write_synced_csv(
         CODES_FILE,
         fieldnames,
         [
