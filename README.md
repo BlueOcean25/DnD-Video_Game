@@ -1,0 +1,15 @@
+# DnD-Video Game
+
+## Updates
+
+The current game version is `v0.5.7-alpha`. It is shown in the corner of the page. The page checks the server version on connection and periodically while open. If a newer server version is available, a reload banner appears over the login page or game. After a server reconnect, signed-in players need to log in again. For each release, update `GAME_VERSION` in `backend/main.py`, `APP_VERSION` in `frontend/index.html`, and the visible version label to the same version.
+
+## Accounts
+
+Install the backend dependencies with `pip install -r backend/requirements.txt`, then run the backend with `python backend/main.py`. For persistent hosted accounts, create a private PostgreSQL database (for example, on Neon) and set its connection string as the `DATABASE_URL` environment variable in the backend's hosting service. Do not put the connection string in source control or expose it to the browser. On its first start with `DATABASE_URL`, the backend creates its tables and imports existing accounts from `backend/account.csv` and reset codes from `backend/codes.csv` once. The database then becomes authoritative. Without `DATABASE_URL`, the backend continues to use the local CSV files; `ACCOUNT_FILE` and `CODES_FILE` can override their paths.
+
+Signed-in players can open **Settings** in the game to change their password. They must enter their current password and choose a new password between 8 and 72 UTF-8 bytes. Passwords are stored as bcrypt hashes in the configured account CSV or in the PostgreSQL `accounts` table.
+
+The reset flow selects an account by its name and saves a one-time code to `backend/codes.csv` (or `CODES_FILE`) in CSV mode, or to the PostgreSQL `password_reset_codes` table when `DATABASE_URL` is configured. The code is not returned to the browser; in database mode an administrator must retrieve it through a trusted database console and send it to the account owner. Reset codes are stored as plain text, so restrict database/file access and verify the requester before sharing a code.
+
+The backend uses `websockets` for game connections and serves HTTP health checks separately: `GET` and `HEAD` requests to `/healthz` return `200 OK` (and `/` remains supported). Health checks do not require a WebSocket upgrade. The game server must still run on a host reachable by players; a database preserves accounts but does not keep the game server online. Three.js remains loaded from its CDN in the browser. The backend writes timestamped server and player activity events to `backend/server.log` and also prints them to the console. The log rotates at 1 MB and keeps three backups (`server.log.1` through `server.log.3`), for a maximum of about 4 MB total. It records connection, login, game-entry, and password-reset events, but never logs passwords or reset codes.

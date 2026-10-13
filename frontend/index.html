@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DnD Video Game - 3D Environment</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #111;
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #auth-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10;
+            display: grid;
+            place-items: center;
+            background: rgba(0, 0, 0, 0.82);
+            color: white;
+        }
+        #auth-overlay[hidden] {
+            display: none;
+        }
+        #auth-panel {
+            box-sizing: border-box;
+            width: min(90vw, 360px);
+            padding: 24px;
+            border: 1px solid #666;
+            border-radius: 8px;
+            background: #222;
+        }
+        #auth-panel h1 {
+            margin-top: 0;
+            font-size: 24px;
+        }
+        #auth-panel input,
+        #auth-panel select,
+        #auth-panel button {
+            box-sizing: border-box;
+            display: block;
+            width: 100%;
+            margin-top: 12px;
+            padding: 10px;
+            font: inherit;
+        }
+        #auth-panel button {
+            cursor: pointer;
+        }
+        #auth-status {
+            overflow-wrap: anywhere;
+        }
+        #settings-toggle {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            z-index: 12;
+            padding: 8px 12px;
+            font: inherit;
+            cursor: pointer;
+        }
+        #settings-toggle[hidden],
+        #settings-panel[hidden] {
+            display: none;
+        }
+        #settings-panel {
+            position: fixed;
+            top: 56px;
+            right: 12px;
+            z-index: 12;
+            box-sizing: border-box;
+            width: min(92vw, 360px);
+            padding: 20px;
+            border: 1px solid #666;
+            border-radius: 8px;
+            background: #222;
+            color: white;
+        }
+        #settings-panel h2 {
+            margin-top: 0;
+        }
+        #settings-panel input,
+        #settings-panel button {
+            box-sizing: border-box;
+            display: block;
+            width: 100%;
+            margin-top: 12px;
+            padding: 10px;
+            font: inherit;
+        }
+        #settings-panel button {
+            cursor: pointer;
+        }
+        #settings-status {
+            overflow-wrap: anywhere;
+        }
+        #update-banner {
+            position: fixed;
+            top: 12px;
+            left: 50%;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-sizing: border-box;
+            width: min(92vw, 640px);
+            padding: 12px;
+            transform: translateX(-50%);
+            border: 1px solid #d6a83b;
+            border-radius: 8px;
+            background: #332b17;
+            color: white;
+        }
+        #update-banner[hidden] {
+            display: none;
+        }
+        #update-message {
+            flex: 1;
+        }
+        #update-banner button {
+            padding: 8px 12px;
+            font: inherit;
+            cursor: pointer;
+        }
+        #version-label {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 11;
+            padding: 6px 9px;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 5px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            font-size: 12px;
+        }
+
+        /* Touchscreen Joystick Outer Ring styling */
+        #joystick-zone {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            width: 120px;
+            height: 120px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 3px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            touch-action: none;
+            display: none;
+        }
+
+        /* Touchscreen Joystick Inner Red Thumb Knob styling */
+        #joystick-stick {
+            position: absolute;
+            top: 35px;
+            left: 35px;
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 0, 0, 0.7);
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
+        }
+
+        /* Touchscreen jump control */
+        #jump-button {
+            position: fixed;
+            z-index: 5;
+            right: 40px;
+            bottom: 50px;
+            width: 80px;
+            height: 80px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+            background: rgba(0, 180, 0, 0.7);
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            touch-action: none;
+            user-select: none;
+        }
+    </style>
+    <!-- WebGL 3D graphics rendering core blueprint library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="auth-overlay">
+        <section id="auth-panel" aria-labelledby="auth-title">
+            <h1 id="auth-title">Log in to play</h1>
+            <div id="login-form">
+                <label for="login-identifier">Name or username</label>
+                <input id="login-identifier" autocomplete="username" required>
+                <label for="login-password">Password</label>
+                <input id="login-password" type="password" autocomplete="current-password" required>
+                <button id="login-button" type="button">Log in</button>
+                <button id="show-reset-button" type="button">Forgot password?</button>
+            </div>
+            <div id="reset-form" hidden>
+                <label for="reset-name">Select your name</label>
+                <select id="reset-name" required>
+                    <option value="">Loading accounts...</option>
+                </select>
+                <button id="request-code-button" type="button">Request reset code</button>
+                <p>After requesting a code, ask an administrator to send it to you.</p>
+                <label for="reset-code">Reset code</label>
+                <input id="reset-code" autocomplete="one-time-code">
+                <label for="new-password">New password (at least 8 characters)</label>
+                <input id="new-password" type="password" autocomplete="new-password">
+                <button id="reset-password-button" type="button">Reset password</button>
+                <button id="back-to-login-button" type="button">Back to log in</button>
+            </div>
+            <p id="auth-status" role="status" aria-live="polite">Connecting to the game server...</p>
+        </section>
+    </div>
+
+    <div id="version-label"></div>
+    <button id="settings-toggle" type="button" hidden aria-expanded="false" aria-controls="settings-panel">
+        Settings
+    </button>
+    <section id="settings-panel" hidden role="dialog" aria-modal="false" aria-labelledby="settings-title">
+        <h2 id="settings-title">Settings</h2>
+        <form id="change-password-form">
+            <label for="current-password">Current password</label>
+            <input id="current-password" type="password" autocomplete="current-password" required>
+            <label for="settings-new-password">New password (8–72 UTF-8 bytes)</label>
+            <input id="settings-new-password" type="password" autocomplete="new-password" required>
+            <label for="confirm-password">Confirm new password</label>
+            <input id="confirm-password" type="password" autocomplete="new-password" required>
+            <button type="submit">Change password</button>
+        </form>
+        <p id="settings-status" role="status" aria-live="polite"></p>
+        <button id="close-settings-button" type="button">Close settings</button>
+    </section>
+
+    <aside id="update-banner" hidden role="status" aria-live="polite">
+        <span id="update-message"></span>
+        <button id="reload-update-button" type="button">Reload now</button>
+        <button id="dismiss-update-button" type="button">Later</button>
+    </aside>
+
+    <div id="joystick-zone">
+        <div id="joystick-stick"></div>
+    </div>
+    <button id="jump-button" type="button">JUMP</button>
+
+    <script>
+        // 1. SETUP THE 3D SCENE & ENGINE CANVAS
+        const scene = new THREE.Scene();
+
+        // Dynamic perspective adjustment for true 3D spatial viewing
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Position camera behind and looking down onto the map environment
+        camera.position.set(0, 8, 12);
+        camera.lookAt(0, 1, 0);
+
+        // 2. ADD FLOOR SURFACE & REAL-TIME GRAVITY SETTINGS
+        // Create an organic structural wireframe ground floor
+        const floorGeo = new THREE.PlaneGeometry(30, 30);
+        const floorMat = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = Math.PI / 2; // Flat ground rotation placement
+        scene.add(floor);
+
+        // Add a structural alignment utility tracking grid over the floor mesh
+        const gridHelper = new THREE.GridHelper(30, 30, 0x444444, 0x222222);
+        scene.add(gridHelper);
+
+        // Kinematic Gravity State Variables
+        const gravity = -0.015;      // Downward acceleration per tick
+        let verticalVelocity = 0;   // Instant vertical trajectory
+        let isGrounded = true;       // Floor attachment boundary flag
+
+        // 3. CREATE YOUR CHARACTER TOKEN (GREEN CUBE)
+        const geometry = new THREE.BoxGeometry(2, 2, 2);
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+        const cube = new THREE.Mesh(geometry, material);
+
+        // Pivot initialization offset forcing bottom surface boundary placement to align cleanly with floor level
+        cube.position.set(0, 1, 0);
+        scene.add(cube);
+
+        // 4. PERSISTENT LIVE WEBSOCKET SERVER TUNNEL
+        const APP_VERSION = 'v0.5.26-alpha';
+        document.getElementById('version-label').textContent = APP_VERSION;
+        let socket;
+        const remotePlayers = {};
+        const authOverlay = document.getElementById('auth-overlay');
+        const loginForm = document.getElementById('login-form');
+        const resetForm = document.getElementById('reset-form');
+        const authStatus = document.getElementById('auth-status');
+        const resetName = document.getElementById('reset-name');
+        const settingsToggle = document.getElementById('settings-toggle');
+        const settingsPanel = document.getElementById('settings-panel');
+        const settingsStatus = document.getElementById('settings-status');
+        const updateBanner = document.getElementById('update-banner');
+        const updateMessage = document.getElementById('update-message');
+        let isAuthenticated = false;
+        let reloginRequired = false;
+        let availableUpdateVersion = '';
+        let dismissedUpdateVersion = '';
+
+        const playerId = Math.random().toString(36).substring(7);
+
+        function sendAuthMessage(data) {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                const status = settingsPanel.hidden ? authStatus : settingsStatus;
+                status.textContent = 'The game server is not connected. Please try again.';
+                return;
+            }
+            socket.send(JSON.stringify(data));
+        }
+
+        function connectToServer() {
+            const connection = new WebSocket('wss://dnd-video-game.onrender.com');
+            connection.playerId = playerId;
+            socket = connection;
+
+            connection.onopen = function() {
+                authStatus.textContent = reloginRequired
+                    ? 'Connection restored. Log in again to rejoin.'
+                    : 'Connected. Log in or reset your password.';
+                sendAuthMessage({ type: 'check_version', version: APP_VERSION });
+                sendAuthMessage({ type: 'get_account_names' });
+            };
+
+            connection.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'update_available') {
+                    availableUpdateVersion = data.version;
+                    updateMessage.textContent =
+                        `Update ${data.version} is available. Reload the page to get the latest version.`;
+                    if (dismissedUpdateVersion !== data.version) {
+                        updateBanner.hidden = false;
+                    }
+                    return;
+                }
+
+                if (data.type === 'account_names') {
+                    resetName.replaceChildren(new Option('Choose your name', ''));
+                    for (const name of data.names) {
+                        resetName.add(new Option(name, name));
+                    }
+                    return;
+                }
+
+                if (data.type === 'login_result') {
+                    if (!data.success) {
+                        authStatus.textContent = 'Login failed. Check your name and password.';
+                        return;
+                    }
+                    isAuthenticated = true;
+                    reloginRequired = false;
+                    authOverlay.hidden = true;
+                    settingsToggle.hidden = false;
+                    authStatus.textContent = '';
+                    connection.send(JSON.stringify({
+                        type: 'join',
+                        id: connection.playerId,
+                        x: cube.position.x,
+                        y: cube.position.y,
+                        z: cube.position.z
+                    }));
+                    return;
+                }
+
+                if (data.type === 'reset_code_result') {
+                    if (!data.success) {
+                        authStatus.textContent = 'Could not request a code for that account.';
+                        return;
+                    }
+                    authStatus.textContent = 'Request saved. Ask an administrator to send you the reset code.';
+                    return;
+                }
+
+                if (data.type === 'password_reset_result') {
+                    authStatus.textContent = data.success
+                        ? 'Password reset. Return to log in and use your new password.'
+                        : 'Password reset failed. Check the name, code, and password requirements.';
+                    return;
+                }
+
+                if (data.type === 'change_password_result') {
+                    if (data.success) {
+                        document.getElementById('change-password-form').reset();
+                        settingsStatus.textContent = 'Password changed successfully.';
+                    } else {
+                        settingsStatus.textContent =
+                            'Password change failed. Check your current password and new password requirements.';
+                    }
+                    return;
+                }
+
+                if (data.type === 'auth_error') {
+                    if (!settingsPanel.hidden) {
+                        settingsStatus.textContent = data.message;
+                    } else {
+                        authStatus.textContent = data.message;
+                    }
+                    return;
+                }
+
+                if (data.id === connection.playerId) return;
+
+                // AUTOMATIC GREETING REPLY
+                if (data.type === 'join') {
+                    connection.send(JSON.stringify({
+                        type: 'reply',
+                        id: connection.playerId,
+                        x: cube.position.x,
+                        y: cube.position.y,
+                        z: cube.position.z
+                    }));
+                }
+
+                // CLEAN DISCONNECT REMOVAL ACTION LOGIC
+                if (data.type === 'leave') {
+                    if (remotePlayers[data.id]) {
+                        scene.remove(remotePlayers[data.id]);
+                        remotePlayers[data.id].geometry.dispose();
+                        remotePlayers[data.id].material.dispose();
+                        delete remotePlayers[data.id];
+                    }
+                    return;
+                }
+
+                // Build or update the red cube for the other player
+                if (!remotePlayers[data.id]) {
+                    const remoteGeometry = new THREE.BoxGeometry(2, 2, 2);
+                    const remoteMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+                    remotePlayers[data.id] = new THREE.Mesh(remoteGeometry, remoteMaterial);
+                    scene.add(remotePlayers[data.id]);
+                }
+
+                // Map tracking fields to the proper 3D coordinates
+                remotePlayers[data.id].position.x = data.x;
+                remotePlayers[data.id].position.y = data.y;
+                remotePlayers[data.id].position.z = data.z !== undefined ? data.z : 0;
+            };
+
+            connection.onclose = function() {
+                if (socket !== connection) return;
+                if (isAuthenticated) {
+                    isAuthenticated = false;
+                    reloginRequired = true;
+                    authOverlay.hidden = false;
+                    settingsToggle.hidden = true;
+                    settingsPanel.hidden = true;
+                    settingsToggle.setAttribute('aria-expanded', 'false');
+                    document.getElementById('change-password-form').reset();
+                }
+                authStatus.textContent = 'Connection lost. Reconnecting to the game server...';
+                window.setTimeout(connectToServer, 3000);
+            };
+        }
+
+        connectToServer();
+        window.setInterval(() => {
+            sendAuthMessage({ type: 'check_version', version: APP_VERSION });
+        }, 30000);
+
+        document.getElementById('reload-update-button').addEventListener('click', () => {
+            window.location.reload();
+        });
+        document.getElementById('dismiss-update-button').addEventListener('click', () => {
+            dismissedUpdateVersion = availableUpdateVersion;
+            updateBanner.hidden = true;
+        });
+        settingsToggle.addEventListener('click', () => {
+            settingsPanel.hidden = !settingsPanel.hidden;
+            settingsToggle.setAttribute('aria-expanded', String(!settingsPanel.hidden));
+            if (!settingsPanel.hidden) {
+                settingsStatus.textContent = '';
+                document.getElementById('current-password').focus();
+            }
+        });
+        document.getElementById('close-settings-button').addEventListener('click', () => {
+            settingsPanel.hidden = true;
+            settingsToggle.setAttribute('aria-expanded', 'false');
+            document.getElementById('change-password-form').reset();
+        });
+        document.getElementById('change-password-form').addEventListener('submit', (event) => {
+            event.preventDefault();
+            const newPassword = document.getElementById('settings-new-password').value;
+            const confirmation = document.getElementById('confirm-password').value;
+            if (newPassword.length < 8 || new TextEncoder().encode(newPassword).length > 72) {
+                settingsStatus.textContent =
+                    'Choose a new password between 8 and 72 UTF-8 bytes.';
+                return;
+            }
+            if (newPassword !== confirmation) {
+                settingsStatus.textContent = 'The new passwords do not match.';
+                return;
+            }
+            sendAuthMessage({
+                type: 'change_password',
+                current_password: document.getElementById('current-password').value,
+                new_password: newPassword
+            });
+            settingsStatus.textContent = 'Updating password...';
+        });
+
+        // Helper event emitter utility dispatching coordinates packet over the active connection network
+        function broadcastMovement() {
+            if (isAuthenticated && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: 'move',
+                    id: socket.playerId,
+                    x: cube.position.x,
+                    y: cube.position.y,
+                    z: cube.position.z
+                }));
+            }
+        }
+
+        function jump() {
+            if (!isAuthenticated || !isGrounded) return false;
+            verticalVelocity = 0.35;
+            isGrounded = false;
+            return true;
+        }
+
+        document.getElementById('login-button').addEventListener('click', () => {
+            authStatus.textContent = 'Checking login...';
+            sendAuthMessage({
+                type: 'login',
+                identifier: document.getElementById('login-identifier').value.trim(),
+                password: document.getElementById('login-password').value
+            });
+        });
+
+        document.getElementById('show-reset-button').addEventListener('click', () => {
+            loginForm.hidden = true;
+            resetForm.hidden = false;
+            authStatus.textContent = 'Select your name to request a password-reset code.';
+        });
+
+        document.getElementById('back-to-login-button').addEventListener('click', () => {
+            resetForm.hidden = true;
+            loginForm.hidden = false;
+            authStatus.textContent = 'Log in with your account.';
+        });
+
+        document.getElementById('request-code-button').addEventListener('click', () => {
+            if (!resetName.value) {
+                authStatus.textContent = 'Select your name first.';
+                return;
+            }
+            sendAuthMessage({ type: 'request_reset_code', name: resetName.value });
+        });
+
+        document.getElementById('reset-password-button').addEventListener('click', () => {
+            const password = document.getElementById('new-password').value;
+            if (password.length < 8) {
+                authStatus.textContent = 'Choose a password with at least 8 characters.';
+                return;
+            }
+            sendAuthMessage({
+                type: 'reset_password',
+                name: resetName.value,
+                code: document.getElementById('reset-code').value.trim(),
+                password
+            });
+        });
+
+        // 6. LAPTOP & COMPUTER ARROW KEYBOARD INPUTS
+        window.addEventListener('keydown', (event) => {
+            if (!isAuthenticated) return;
+            if (event.target instanceof HTMLElement
+                && event.target.matches('input, textarea, select, button, [contenteditable="true"]')) {
+                return;
+            }
+            let moved = false;
+
+            // X & Z movement handles translation across flat ground terrain
+            if (event.key === 'ArrowUp' || event.key === 'w') { cube.position.z -= 0.3; moved = true; }
+            if (event.key === 'ArrowDown' || event.key === 's') { cube.position.z += 0.3; moved = true; }
+            if (event.key === 'ArrowLeft' || event.key === 'a') { cube.position.x -= 0.3; moved = true; }
+            if (event.key === 'ArrowRight' || event.key === 'd') { cube.position.x += 0.3; moved = true; }
+
+            // JUMP MECHANIC: Apply instantaneous vertical impulse velocity when standing on floor level
+            if (event.key === ' ' && jump()) {
+                moved = true;
+            }
+
+            // Map limits to prevent users bounding off edge boundaries
+            cube.position.x = Math.max(-14, Math.min(14, cube.position.x));
+            cube.position.z = Math.max(-14, Math.min(14, cube.position.z));
+
+            if (moved) {
+                broadcastMovement();
+            }
+        });
+
+        // 7. TOUCHSCREEN MOBILE CONTROLLER LOGIC
+        const zone = document.getElementById('joystick-zone');
+        const stick = document.getElementById('joystick-stick');
+        const jumpButton = document.getElementById('jump-button');
+
+        const isMobileTouch = ('ontouchstart' in window || navigator.maxTouchPoints > 0) && window.innerWidth < 1024;
+        if (isMobileTouch) {
+            zone.style.display = 'block';
+            jumpButton.style.display = 'flex';
+        }
+
+        jumpButton.addEventListener('click', () => {
+            if (jump()) broadcastMovement();
+        });
+
+        let joystickActive = false;
+        let startX = 0, startY = 0;
+
+        zone.addEventListener('touchstart', (e) => {
+            if (!isAuthenticated) return;
+            joystickActive = true;
+            const rect = zone.getBoundingClientRect();
+            startX = rect.left + rect.width / 2;
+            startY = rect.top + rect.height / 2;
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (!isAuthenticated || !joystickActive) return;
+
+            const touch = e.touches[0];
+            let deltaX = touch.clientX - startX;
+            let deltaY = touch.clientY - startY;
+
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            const maxRadius = 40;
+            if (distance > maxRadius) {
+                deltaX = (deltaX / distance) * maxRadius;
+                deltaY = (deltaY / distance) * maxRadius;
+            }
+
+            stick.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+
+            // Map mobile translation values to 3D Ground Coordinates (X & Z Plane)
+            cube.position.x += (deltaX / maxRadius) * 0.1;
+            cube.position.z += (deltaY / maxRadius) * 0.1;
+
+            // Environment floor limits boundaries containment check
+            cube.position.x = Math.max(-14, Math.min(14, cube.position.x));
+            cube.position.z = Math.max(-14, Math.min(14, cube.position.z));
+
+            broadcastMovement();
+
+        }, { passive: false });
+        window.addEventListener('touchend', () => {
+        joystickActive = false;
+        stick.style.transform = 'translate(0px, 0px)';
+        });
+        // Window resize adaptation handler
+        window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 8. CONTINUOUS FRAME RE-DRAW ANIMATION LOOP
+        function animate() {
+        requestAnimationFrame(animate);
+        // --- KINEMATIC GRAVITY ENGINE SIMULATION ---
+        if (!isGrounded) {
+        verticalVelocity += gravity; // Pull downwards over time
+        cube.position.y += verticalVelocity;
+        // Floor plane boundary checking threshold (bottom height box matching 1)
+        if (cube.position.y <= 1) {
+        cube.position.y = 1;
+        verticalVelocity = 0;
+        isGrounded = true;
+        }
+        broadcastMovement(); // Share ongoing falling updates with peer networks
+        }
+        const cameraTargetX = cube.position.x;
+        const cameraTargetY = cube.position.y + 7;
+        const cameraTargetZ = cube.position.z + 11;
+        camera.position.x += (cameraTargetX - camera.position.x) * 0.08;
+        camera.position.y += (cameraTargetY - camera.position.y) * 0.08;
+        camera.position.z += (cameraTargetZ - camera.position.z) * 0.08;
+        camera.lookAt(cube.position);
+        // Continuous mesh presentation rotation
+        cube.rotation.x += 0.005;
+        cube.rotation.y += 0.005;
+        for (let id in remotePlayers) {
+        remotePlayers[id].rotation.x += 0.005;
+        remotePlayers[id].rotation.y += 0.005;
+        }
+        renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
