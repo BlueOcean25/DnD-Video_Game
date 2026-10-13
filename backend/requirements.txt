@@ -1,2 +1,0 @@
-bcrypt==5.0.0
-websockets>=14,<16
