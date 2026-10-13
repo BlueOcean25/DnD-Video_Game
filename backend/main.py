@@ -50,7 +50,7 @@ DATABASE_URL = load_database_url()
 ACCOUNT_FILE = Path(os.environ.get("ACCOUNT_FILE", BACKEND_DIR / "account.csv"))
 CODES_FILE = Path(os.environ.get("CODES_FILE", BACKEND_DIR / "codes.csv"))
 LOG_FILE = BACKEND_DIR / "server.log"
-GAME_VERSION = "v0.5.26-alpha"
+GAME_VERSION = "v0.5.27-alpha"
 CSV_ORDER_COLUMN = "__csv_sync_order"
 connected_players = set()
 
@@ -568,7 +568,69 @@ def push_accounts_to_database():
     return inserted, updated
 
 
-def initialize_database(sync_accounts=True, sync_csv_files=True):
+def sync_codes_to_csv():
+    if not DATABASE_URL:
+        return
+
+    with database_connection() as connection:
+        codes = connection.execute(
+            "SELECT name, code FROM password_reset_codes ORDER BY id"
+        ).fetchall()
+
+    if CODES_FILE.exists():
+        fieldnames, _ = read_csv(CODES_FILE, ())
+        name_field = csv_field(fieldnames, "name", CODES_FILE)
+        code_field = csv_field(fieldnames, "code", CODES_FILE)
+    else:
+        fieldnames = ["Name", "Code"]
+        name_field, code_field = "Name", "Code"
+
+    write_csv(
+        CODES_FILE,
+        fieldnames,
+        [
+            {
+                **{field: "" for field in fieldnames},
+                name_field: row["name"],
+                code_field: row["code"],
+            }
+            for row in codes
+        ],
+    )
+
+
+def push_codes_to_database():
+    if not DATABASE_URL:
+        raise RuntimeError("Set DATABASE_URL before pushing CSV files to Neon")
+    if not CODES_FILE.exists():
+        return 0
+
+    fieldnames, codes = read_csv(CODES_FILE, ())
+    name_field = csv_field(fieldnames, "name", CODES_FILE)
+    code_field = csv_field(fieldnames, "code", CODES_FILE)
+    if any(None in row and row[None] for row in codes):
+        raise ValueError(
+            f"{CODES_FILE.name} contains rows with more values than its header"
+        )
+
+    with database_connection() as connection:
+        connection.execute("DELETE FROM password_reset_codes")
+        for row in codes:
+            code = row.get(code_field)
+            if code:
+                connection.execute(
+                    """
+                    INSERT INTO password_reset_codes (name, code)
+                    VALUES (%s, %s)
+                    """,
+                    (row.get(name_field, ""), code),
+                )
+
+    sync_codes_to_csv()
+    return sum(bool(row.get(code_field)) for row in codes)
+
+
+def initialize_database(sync_accounts=True, sync_csv_files=True, sync_codes=True):
     if not DATABASE_URL:
         return
 
@@ -740,6 +802,8 @@ def initialize_database(sync_accounts=True, sync_csv_files=True):
         sync_accounts_to_csv()
     if sync_csv_files:
         sync_csv_files_from_database()
+    if sync_codes:
+        sync_codes_to_csv()
 
 
 def list_account_names():
@@ -869,6 +933,7 @@ def create_reset_code(name):
                 "INSERT INTO password_reset_codes (name, code) VALUES (%s, %s)",
                 (name, code),
             )
+        sync_codes_to_csv()
         return code
 
     fieldnames, accounts = account_rows()
@@ -938,6 +1003,7 @@ def reset_password(name, code, password):
                 (matching_code["id"],),
             )
         sync_accounts_to_csv()
+        sync_codes_to_csv()
         return True
 
     account_fields, accounts = account_rows()
@@ -1303,15 +1369,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--push-csv-to-neon",
         action="store_true",
-        help="Push account and game-data CSV files to Neon",
+        help="Push account, reset-code, and game-data CSV files to Neon",
     )
     arguments = parser.parse_args()
     if arguments.push_csv_to_neon:
         configure_logging()
-        initialize_database(sync_accounts=False, sync_csv_files=False)
+        initialize_database(
+            sync_accounts=False,
+            sync_csv_files=False,
+            sync_codes=False,
+        )
         inserted, updated = push_accounts_to_database()
+        code_count = push_codes_to_database()
         file_counts = push_csv_files_to_database()
         print(f"Pushed account CSV to Neon: {inserted} added, {updated} updated.")
+        print(f"Pushed codes CSV to Neon: {code_count} reset codes.")
         for filename, row_count in file_counts.items():
             print(f"Pushed {filename} to Neon: {row_count} rows.")
     else:
