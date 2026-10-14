@@ -3,5 +3,6 @@ abilities.csv
 account.csv
 codes.csv
 players.csv
+pull.py
 server.log
 stats.csv

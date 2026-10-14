@@ -269,7 +269,7 @@
         cube.position.set(0, 1, 0);
         scene.add(cube);
 
-        const APP_VERSION = 'v0.5.27-alpha';
+        const APP_VERSION = 'v0.5.29-alpha';
         document.getElementById('version-label').textContent = APP_VERSION;
         let socket;
         const remotePlayers = {};
@@ -392,6 +392,15 @@
                     } else {
                         authStatus.textContent = data.message;
                     }
+                    return;
+                }
+
+                if (data.type === 'restore_position' && data.position) {
+                    cube.position.set(
+                        data.position.x,
+                        data.position.y,
+                        data.position.z
+                    );
                     return;
                 }
 
