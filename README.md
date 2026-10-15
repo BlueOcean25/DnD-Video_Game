@@ -4,6 +4,10 @@
 
 The current game version is `v0.5.7-alpha`. It is shown in the corner of the page. The page checks the server version on connection and periodically while open. If a newer server version is available, a reload banner appears over the login page or game. After a server reconnect, signed-in players need to log in again. For each release, update `GAME_VERSION` in `backend/main.py`, `APP_VERSION` in `frontend/index.html`, and the visible version label to the same version.
 
+## World and controls
+
+The grassy play area is a circle 128 game units in diameter. Drag the scene to orbit the camera. Hold WASD or the arrow keys to move relative to the camera; mobile players can use the on-screen joystick. Keyboard and joystick movement share the same maximum speed and support diagonal movement. Wind speed and direction vary over time, and both the sky and grass colors respond to the current wind.
+
 ## Accounts
 
 Install the backend dependencies with `pip install -r backend/requirements.txt`, then run the backend with `python backend/main.py`. The CSV files in `backend/` are the authoritative data store; the server reads and writes them directly and does not pull from PostgreSQL or Neon at startup. `account.csv` is authoritative for login accounts and password hashes, and `codes.csv` stores one-time reset codes. Account and reset changes are written to those files immediately. `ACCOUNT_FILE` and `CODES_FILE` can override the account and reset-code paths.

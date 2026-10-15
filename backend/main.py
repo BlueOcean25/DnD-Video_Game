@@ -21,8 +21,9 @@ ACCOUNT_FILE = Path(os.environ.get("ACCOUNT_FILE", BACKEND_DIR / "account.csv"))
 CODES_FILE = Path(os.environ.get("CODES_FILE", BACKEND_DIR / "codes.csv"))
 PLAYERS_FILE = BACKEND_DIR / "players.csv"
 LOG_FILE = BACKEND_DIR / "server.log"
-GAME_VERSION = "v0.5.29-alpha"
+GAME_VERSION = "v0.6.0-alpha"
 POSITION_SAVE_INTERVAL = 1.0
+MAP_RADIUS = 64.0
 connected_players = set()
 
 
@@ -124,9 +125,8 @@ def player_position_from_message(data):
         coordinates[axis] = coordinate
 
     if (
-        not -14 <= coordinates["x"] <= 14
-        or not 1 <= coordinates["y"] <= 100
-        or not -14 <= coordinates["z"] <= 14
+        not 1 <= coordinates["y"] <= 100
+        or math.hypot(coordinates["x"], coordinates["z"]) > MAP_RADIUS
     ):
         return None
     return coordinates
@@ -165,9 +165,8 @@ def saved_player_position(name):
     if not all(math.isfinite(value) for value in position.values()):
         return None
     if (
-        not -14 <= position["x"] <= 14
-        or not 1 <= position["y"] <= 100
-        or not -14 <= position["z"] <= 14
+        not 1 <= position["y"] <= 100
+        or math.hypot(position["x"], position["z"]) > MAP_RADIUS
     ):
         return None
     return position

@@ -12,6 +12,20 @@
         }
         canvas {
             display: block;
+            touch-action: none;
+        }
+        #weather-status {
+            position: fixed;
+            top: 48px;
+            left: 12px;
+            z-index: 11;
+            padding: 6px 9px;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 5px;
+            background: rgba(0, 0, 0, 0.55);
+            color: white;
+            font-size: 13px;
+            pointer-events: none;
         }
         #auth-overlay {
             position: fixed;
@@ -233,34 +247,159 @@
         <button id="dismiss-update-button" type="button">Later</button>
     </aside>
 
+    <div id="weather-status" role="status" aria-live="off"></div>
     <div id="joystick-zone">
         <div id="joystick-stick"></div>
     </div>
     <button id="jump-button" type="button">JUMP</button>
 
     <script>
+        const MAP_RADIUS = 64;
         const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        scene.fog = new THREE.Fog(scene.background, 100, 240);
 
         const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        camera.position.set(0, 8, 12);
-        camera.lookAt(0, 1, 0);
+        const hemisphereLight = new THREE.HemisphereLight(0xddeeff, 0x527342, 1.8);
+        scene.add(hemisphereLight);
+        const sunlight = new THREE.DirectionalLight(0xffffff, 1.2);
+        sunlight.position.set(-40, 80, 30);
+        scene.add(sunlight);
 
-        const floorGeo = new THREE.PlaneGeometry(30, 30);
-        const floorMat = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide });
+        const grassCanvas = document.createElement('canvas');
+        grassCanvas.width = 256;
+        grassCanvas.height = 256;
+        const grassContext = grassCanvas.getContext('2d');
+        grassContext.fillStyle = '#719c4b';
+        grassContext.fillRect(0, 0, grassCanvas.width, grassCanvas.height);
+        for (let blade = 0; blade < 1800; blade += 1) {
+            const x = Math.random() * grassCanvas.width;
+            const y = Math.random() * grassCanvas.height;
+            const shade = Math.floor(70 + Math.random() * 90);
+            grassContext.strokeStyle = `rgba(${shade}, ${shade + 45}, ${Math.floor(shade * 0.45)}, 0.55)`;
+            grassContext.lineWidth = 1;
+            grassContext.beginPath();
+            grassContext.moveTo(x, y);
+            grassContext.lineTo(x + Math.random() * 3 - 1.5, y - 2 - Math.random() * 3);
+            grassContext.stroke();
+        }
+        const grassTexture = new THREE.CanvasTexture(grassCanvas);
+        const floorGeo = new THREE.CircleGeometry(MAP_RADIUS, 128);
+        const floorMat = new THREE.MeshLambertMaterial({
+            color: 0xffffff,
+            map: grassTexture,
+            side: THREE.DoubleSide
+        });
         const floor = new THREE.Mesh(floorGeo, floorMat);
-        floor.rotation.x = Math.PI / 2;
+        floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
-        const gridHelper = new THREE.GridHelper(30, 30, 0x444444, 0x222222);
-        scene.add(gridHelper);
+        const boundary = new THREE.Mesh(
+            new THREE.TorusGeometry(MAP_RADIUS, 0.3, 8, 128),
+            new THREE.MeshLambertMaterial({ color: 0x49652f })
+        );
+        boundary.rotation.x = -Math.PI / 2;
+        boundary.position.y = 0.05;
+        scene.add(boundary);
 
-        const gravity = -0.015;
+        const cameraYaw = { value: 0 };
+        const cameraPitch = { value: 0.52 };
+        const cameraDistance = 18;
+        let orbitPointerId = null;
+        let previousPointerX = 0;
+        let previousPointerY = 0;
+        renderer.domElement.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0) return;
+            orbitPointerId = event.pointerId;
+            previousPointerX = event.clientX;
+            previousPointerY = event.clientY;
+            renderer.domElement.setPointerCapture(event.pointerId);
+        });
+        renderer.domElement.addEventListener('pointermove', (event) => {
+            if (event.pointerId !== orbitPointerId) return;
+            cameraYaw.value -= (event.clientX - previousPointerX) * 0.006;
+            cameraPitch.value = Math.max(
+                0.12,
+                Math.min(1.35, cameraPitch.value - (event.clientY - previousPointerY) * 0.004)
+            );
+            previousPointerX = event.clientX;
+            previousPointerY = event.clientY;
+        });
+        const stopOrbit = (event) => {
+            if (event.pointerId === orbitPointerId) orbitPointerId = null;
+        };
+        renderer.domElement.addEventListener('pointerup', stopOrbit);
+        renderer.domElement.addEventListener('pointercancel', stopOrbit);
+
+        const weatherStatus = document.getElementById('weather-status');
+        const compassDirections = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+        const weatherStepMilliseconds = 18000;
+        const wind = { speed: 0, direction: 0 };
+        const skyColor = new THREE.Color();
+
+        function weatherForStep(step) {
+            let seed = (step >>> 0) || 1;
+            const nextRandom = () => {
+                seed ^= seed << 13;
+                seed ^= seed >>> 17;
+                seed ^= seed << 5;
+                return (seed >>> 0) / 4294967296;
+            };
+            return {
+                speed: nextRandom() * 45,
+                direction: nextRandom() * Math.PI * 2
+            };
+        }
+
+        function updateWeather(now) {
+            const weatherStep = Math.floor(now / weatherStepMilliseconds);
+            const previousWeather = weatherForStep(weatherStep - 1);
+            const targetWeather = weatherForStep(weatherStep);
+            const progress = Math.min(
+                (now % weatherStepMilliseconds) / 3500,
+                1
+            );
+            const blend = progress * progress * (3 - 2 * progress);
+            wind.speed = previousWeather.speed
+                + (targetWeather.speed - previousWeather.speed) * blend;
+            const directionDifference = Math.atan2(
+                Math.sin(targetWeather.direction - previousWeather.direction),
+                Math.cos(targetWeather.direction - previousWeather.direction)
+            );
+            wind.direction = previousWeather.direction + directionDifference * blend;
+            const speedFactor = Math.min(wind.speed / 45, 1);
+            const hueShift = Math.cos(wind.direction) * 0.018;
+            skyColor.setHSL(
+                0.57 + hueShift,
+                0.48 - speedFactor * 0.2,
+                0.72 - speedFactor * 0.2
+            );
+            scene.background.copy(skyColor);
+            scene.fog.color.copy(skyColor);
+            floorMat.color.setHSL(
+                0.27 + Math.sin(wind.direction) * 0.025,
+                0.42 - speedFactor * 0.12,
+                0.72 - speedFactor * 0.18
+            );
+            const compassIndex = Math.round(
+                ((wind.direction + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)
+            ) % compassDirections.length;
+            weatherStatus.textContent =
+                `Wind: ${wind.speed.toFixed(1)} km/h · ${compassDirections[compassIndex]}`;
+        }
+
+        const gravity = -54;
+        const jumpVelocity = 21;
+        const movementSpeed = 6;
+        const pressedKeys = new Set();
+        const joystickInput = { x: 0, y: 0 };
         let verticalVelocity = 0;
         let isGrounded = true;
+        let lastMovementBroadcastAt = 0;
 
         const geometry = new THREE.BoxGeometry(2, 2, 2);
         const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
@@ -268,8 +407,14 @@
 
         cube.position.set(0, 1, 0);
         scene.add(cube);
+        camera.position.set(
+            0,
+            cube.position.y + 1 + Math.sin(cameraPitch.value) * cameraDistance,
+            Math.cos(cameraPitch.value) * cameraDistance
+        );
+        camera.lookAt(cube.position.x, cube.position.y + 1, cube.position.z);
 
-        const APP_VERSION = 'v0.5.29-alpha';
+        const APP_VERSION = 'v0.6.0-alpha';
         document.getElementById('version-label').textContent = APP_VERSION;
         let socket;
         const remotePlayers = {};
@@ -401,6 +546,7 @@
                         data.position.y,
                         data.position.z
                     );
+                    clampPlayerPosition();
                     return;
                 }
 
@@ -497,7 +643,7 @@
         });
 
         function broadcastMovement() {
-            if (isAuthenticated && socket.readyState === WebSocket.OPEN) {
+            if (isAuthenticated && socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify(
                     playerPositionMessage('move', socket.playerId)
                 ));
@@ -505,13 +651,17 @@
         }
 
         function clampPlayerPosition() {
-            cube.position.x = Math.max(-14, Math.min(14, cube.position.x));
-            cube.position.z = Math.max(-14, Math.min(14, cube.position.z));
+            const distance = Math.hypot(cube.position.x, cube.position.z);
+            const limit = MAP_RADIUS - 1;
+            if (distance > limit) {
+                cube.position.x *= limit / distance;
+                cube.position.z *= limit / distance;
+            }
         }
 
         function jump() {
             if (!isAuthenticated || !isGrounded) return false;
-            verticalVelocity = 0.35;
+            verticalVelocity = jumpVelocity;
             isGrounded = false;
             return true;
         }
@@ -559,28 +709,33 @@
             });
         });
 
+        function isTypingTarget(target) {
+            return target instanceof HTMLElement
+                && target.matches('input, textarea, select, button, [contenteditable="true"]');
+        }
+
+        const movementKeys = new Set([
+            'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'
+        ]);
         window.addEventListener('keydown', (event) => {
-            if (!isAuthenticated) return;
-            if (event.target instanceof HTMLElement
-                && event.target.matches('input, textarea, select, button, [contenteditable="true"]')) {
-                return;
+            if (!isAuthenticated || isTypingTarget(event.target)) return;
+            const key = event.key.toLowerCase();
+            if (movementKeys.has(key)) {
+                pressedKeys.add(key);
+                event.preventDefault();
+            } else if (event.code === 'Space') {
+                event.preventDefault();
+                if (!event.repeat && jump()) broadcastMovement();
             }
-            let moved = false;
-
-            if (event.key === 'ArrowUp' || event.key === 'w') { cube.position.z -= 0.3; moved = true; }
-            if (event.key === 'ArrowDown' || event.key === 's') { cube.position.z += 0.3; moved = true; }
-            if (event.key === 'ArrowLeft' || event.key === 'a') { cube.position.x -= 0.3; moved = true; }
-            if (event.key === 'ArrowRight' || event.key === 'd') { cube.position.x += 0.3; moved = true; }
-
-            if (event.key === ' ' && jump()) {
-                moved = true;
-            }
-
-            clampPlayerPosition();
-
-            if (moved) {
-                broadcastMovement();
-            }
+        });
+        window.addEventListener('keyup', (event) => {
+            pressedKeys.delete(event.key.toLowerCase());
+        });
+        window.addEventListener('blur', () => {
+            pressedKeys.clear();
+            joystickInput.x = 0;
+            joystickInput.y = 0;
+            stick.style.transform = 'translate(0px, 0px)';
         });
 
         const zone = document.getElementById('joystick-zone');
@@ -597,23 +752,22 @@
             if (jump()) broadcastMovement();
         });
 
-        let joystickActive = false;
-        let startX = 0, startY = 0;
-
-        zone.addEventListener('touchstart', () => {
+        let joystickPointerId = null;
+        let startX = 0;
+        let startY = 0;
+        zone.addEventListener('pointerdown', (event) => {
             if (!isAuthenticated) return;
-            joystickActive = true;
+            joystickPointerId = event.pointerId;
             const rect = zone.getBoundingClientRect();
             startX = rect.left + rect.width / 2;
             startY = rect.top + rect.height / 2;
+            zone.setPointerCapture(event.pointerId);
         });
 
-        window.addEventListener('touchmove', (e) => {
-            if (!isAuthenticated || !joystickActive) return;
-
-            const touch = e.touches[0];
-            let deltaX = touch.clientX - startX;
-            let deltaY = touch.clientY - startY;
+        zone.addEventListener('pointermove', (event) => {
+            if (!isAuthenticated || event.pointerId !== joystickPointerId) return;
+            let deltaX = event.clientX - startX;
+            let deltaY = event.clientY - startY;
 
             const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
             const maxRadius = 40;
@@ -623,19 +777,19 @@
             }
 
             stick.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-
-            cube.position.x += (deltaX / maxRadius) * 0.1;
-            cube.position.z += (deltaY / maxRadius) * 0.1;
-
-            clampPlayerPosition();
-
-            broadcastMovement();
-        }, { passive: false });
-
-        window.addEventListener('touchend', () => {
-            joystickActive = false;
-            stick.style.transform = 'translate(0px, 0px)';
+            joystickInput.x = deltaX / maxRadius;
+            joystickInput.y = deltaY / maxRadius;
         });
+
+        const stopJoystick = (event) => {
+            if (event.pointerId !== joystickPointerId) return;
+            joystickPointerId = null;
+            joystickInput.x = 0;
+            joystickInput.y = 0;
+            stick.style.transform = 'translate(0px, 0px)';
+        };
+        zone.addEventListener('pointerup', stopJoystick);
+        zone.addEventListener('pointercancel', stopJoystick);
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -643,26 +797,61 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
-        function animate() {
+        let previousFrameTime = performance.now();
+        function animate(now) {
             requestAnimationFrame(animate);
+            const deltaTime = Math.min((now - previousFrameTime) / 1000, 0.05);
+            previousFrameTime = now;
+            updateWeather(Date.now());
+
+            let forwardInput = Number(pressedKeys.has('w') || pressedKeys.has('arrowup'))
+                - Number(pressedKeys.has('s') || pressedKeys.has('arrowdown'));
+            let rightInput = Number(pressedKeys.has('d') || pressedKeys.has('arrowright'))
+                - Number(pressedKeys.has('a') || pressedKeys.has('arrowleft'));
+            forwardInput -= joystickInput.y;
+            rightInput += joystickInput.x;
+            const inputLength = Math.hypot(forwardInput, rightInput);
+            let moved = false;
+            if (isAuthenticated && inputLength > 0) {
+                forwardInput /= Math.max(1, inputLength);
+                rightInput /= Math.max(1, inputLength);
+                cube.position.x += (
+                    -Math.sin(cameraYaw.value) * forwardInput
+                    + Math.cos(cameraYaw.value) * rightInput
+                ) * movementSpeed * deltaTime;
+                cube.position.z += (
+                    -Math.cos(cameraYaw.value) * forwardInput
+                    - Math.sin(cameraYaw.value) * rightInput
+                ) * movementSpeed * deltaTime;
+                clampPlayerPosition();
+                moved = true;
+            }
+
             if (!isGrounded) {
-                verticalVelocity += gravity;
-                cube.position.y += verticalVelocity;
+                verticalVelocity += gravity * deltaTime;
+                cube.position.y += verticalVelocity * deltaTime;
                 if (cube.position.y <= 1) {
                     cube.position.y = 1;
                     verticalVelocity = 0;
                     isGrounded = true;
                 }
+                moved = true;
+            }
+            if (moved && now - lastMovementBroadcastAt >= 100) {
                 broadcastMovement();
+                lastMovementBroadcastAt = now;
             }
 
-            const cameraTargetX = cube.position.x;
-            const cameraTargetY = cube.position.y + 7;
-            const cameraTargetZ = cube.position.z + 11;
+            const cameraTargetX = cube.position.x
+                + Math.sin(cameraYaw.value) * Math.cos(cameraPitch.value) * cameraDistance;
+            const cameraTargetY = cube.position.y
+                + Math.sin(cameraPitch.value) * cameraDistance;
+            const cameraTargetZ = cube.position.z
+                + Math.cos(cameraYaw.value) * Math.cos(cameraPitch.value) * cameraDistance;
             camera.position.x += (cameraTargetX - camera.position.x) * 0.08;
             camera.position.y += (cameraTargetY - camera.position.y) * 0.08;
             camera.position.z += (cameraTargetZ - camera.position.z) * 0.08;
-            camera.lookAt(cube.position);
+            camera.lookAt(cube.position.x, cube.position.y + 1, cube.position.z);
 
             cube.rotation.x += 0.005;
             cube.rotation.y += 0.005;
