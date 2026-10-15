@@ -6,3 +6,4 @@ players.csv
 pull.py
 server.log
 stats.csv
+!sync.py

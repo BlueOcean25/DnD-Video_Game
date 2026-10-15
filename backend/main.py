@@ -12,6 +12,14 @@ import time
 from pathlib import Path
 
 import bcrypt
+from data_store import (
+    DATABASE_URL,
+    connect,
+    ensure_schema,
+    fetch_dataset,
+    replace_dataset,
+    upsert_record,
+)
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
@@ -21,10 +29,29 @@ ACCOUNT_FILE = Path(os.environ.get("ACCOUNT_FILE", BACKEND_DIR / "account.csv"))
 CODES_FILE = Path(os.environ.get("CODES_FILE", BACKEND_DIR / "codes.csv"))
 PLAYERS_FILE = BACKEND_DIR / "players.csv"
 LOG_FILE = BACKEND_DIR / "server.log"
-GAME_VERSION = "v0.6.0-alpha"
+GAME_VERSION = "v0.6.1-alpha"
 POSITION_SAVE_INTERVAL = 1.0
 MAP_RADIUS = 64.0
 connected_players = set()
+
+
+def dataset_for_path(path):
+    candidate = Path(path)
+    dataset_paths = {
+        "accounts": ACCOUNT_FILE,
+        "codes": CODES_FILE,
+        "players": PLAYERS_FILE,
+        "stats": BACKEND_DIR / "stats.csv",
+        "abilities": BACKEND_DIR / "abilities.csv",
+    }
+    return next(
+        (
+            dataset
+            for dataset, dataset_path in dataset_paths.items()
+            if candidate == dataset_path
+        ),
+        None,
+    )
 
 
 def configure_logging():
@@ -45,6 +72,15 @@ def configure_logging():
 
 
 def read_csv(path, required_fields):
+    dataset = dataset_for_path(path)
+    if DATABASE_URL and dataset:
+        with connect() as connection:
+            ensure_schema(connection)
+            fieldnames, records = fetch_dataset(connection, dataset)
+        if not set(required_fields).issubset(fieldnames):
+            raise ValueError(f"{path.name} is missing required CSV columns")
+        return fieldnames, list(records.values())
+
     with path.open("r", newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file)
         if not reader.fieldnames or not set(required_fields).issubset(
@@ -55,6 +91,13 @@ def read_csv(path, required_fields):
 
 
 def write_csv(path, fieldnames, rows):
+    dataset = dataset_for_path(path)
+    if DATABASE_URL and dataset:
+        with connect() as connection:
+            ensure_schema(connection)
+            replace_dataset(connection, dataset, fieldnames, rows)
+        return
+
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -133,7 +176,7 @@ def player_position_from_message(data):
 
 
 def saved_player_position(name):
-    if not PLAYERS_FILE.exists():
+    if not DATABASE_URL and not PLAYERS_FILE.exists():
         return None
     fieldnames, players = read_csv(PLAYERS_FILE, ())
     name_field = csv_field(fieldnames, "name", PLAYERS_FILE)
@@ -173,6 +216,45 @@ def saved_player_position(name):
 
 
 def save_player_position(name, position):
+    if DATABASE_URL:
+        with connect() as connection:
+            ensure_schema(connection)
+            fieldnames, records = fetch_dataset(connection, "players")
+            name_field = csv_field(fieldnames, "name", PLAYERS_FILE)
+            coordinate_fields = {}
+            for axis in ("x", "y", "z"):
+                field = next(
+                    (
+                        candidate
+                        for candidate in fieldnames
+                        if candidate.lower() == axis
+                    ),
+                    None,
+                )
+                if field is None:
+                    field = axis
+                    fieldnames.append(field)
+                coordinate_fields[axis] = field
+
+            matching_players = [
+                player
+                for player in records.values()
+                if player.get(name_field) == name
+            ]
+            if len(matching_players) > 1:
+                raise ValueError(
+                    f"{PLAYERS_FILE.name} has duplicate records for {name!r}"
+                )
+            if matching_players:
+                player = matching_players[0]
+            else:
+                player = {field: "" for field in fieldnames}
+                player[name_field] = name
+            for axis, field in coordinate_fields.items():
+                player[field] = format(position[axis], ".15g")
+            upsert_record(connection, "players", fieldnames, player)
+        return
+
     if PLAYERS_FILE.exists():
         fieldnames, players = read_csv(PLAYERS_FILE, ())
     else:
@@ -280,7 +362,7 @@ def create_reset_code(name):
         return None
 
     code = secrets.token_urlsafe(24)
-    if CODES_FILE.exists():
+    if DATABASE_URL or CODES_FILE.exists():
         fieldnames, codes = read_csv(CODES_FILE, ())
     else:
         fieldnames, codes = ["Name", "Code"], []
@@ -713,7 +795,15 @@ async def handle_tcp_request(reader, writer, websocket_port):
 
 async def main():
     configure_logging()
-    account_rows()
+    if DATABASE_URL:
+        with connect() as connection:
+            ensure_schema(connection)
+    _, accounts = account_rows()
+    if DATABASE_URL and not accounts:
+        raise RuntimeError(
+            "Neon contains no game accounts. Run `python backend/sync.py` "
+            "from the Codespace to import and reconcile the CSV data."
+        )
 
     host = "0.0.0.0"
     public_port = int(os.environ.get("PORT", "10000"))
