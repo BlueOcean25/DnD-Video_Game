@@ -29,7 +29,7 @@ ACCOUNT_FILE = Path(os.environ.get("ACCOUNT_FILE", BACKEND_DIR / "account.csv"))
 CODES_FILE = Path(os.environ.get("CODES_FILE", BACKEND_DIR / "codes.csv"))
 PLAYERS_FILE = BACKEND_DIR / "players.csv"
 LOG_FILE = BACKEND_DIR / "server.log"
-GAME_VERSION = "v0.6.1-alpha"
+GAME_VERSION = "v0.6.5-alpha"
 POSITION_SAVE_INTERVAL = 1.0
 MAP_RADIUS = 64.0
 connected_players = set()
@@ -52,6 +52,15 @@ def dataset_for_path(path):
         ),
         None,
     )
+
+
+def validate_data_store_config():
+    if not DATABASE_URL and not ACCOUNT_FILE.is_file():
+        raise RuntimeError(
+            f"{ACCOUNT_FILE} is missing and DATABASE_URL is not set. "
+            "For Render, add DATABASE_URL as a secret environment variable; "
+            "the Codespace .env file is not available to the deployed service."
+        )
 
 
 def configure_logging():
@@ -795,6 +804,7 @@ async def handle_tcp_request(reader, writer, websocket_port):
 
 async def main():
     configure_logging()
+    validate_data_store_config()
     if DATABASE_URL:
         with connect() as connection:
             ensure_schema(connection)

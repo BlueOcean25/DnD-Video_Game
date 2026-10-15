@@ -19,6 +19,8 @@
             top: 48px;
             left: 12px;
             z-index: 11;
+            display: grid;
+            gap: 3px;
             padding: 6px 9px;
             border: 1px solid rgba(255, 255, 255, 0.35);
             border-radius: 5px;
@@ -247,7 +249,10 @@
         <button id="dismiss-update-button" type="button">Later</button>
     </aside>
 
-    <div id="weather-status" role="status" aria-live="off"></div>
+    <div id="weather-status" role="status" aria-live="off">
+        <span id="game-time"></span>
+        <span id="wind-status"></span>
+    </div>
     <div id="joystick-zone">
         <div id="joystick-stick"></div>
     </div>
@@ -271,23 +276,43 @@
         scene.add(sunlight);
 
         const grassCanvas = document.createElement('canvas');
-        grassCanvas.width = 256;
-        grassCanvas.height = 256;
+        grassCanvas.width = 512;
+        grassCanvas.height = 512;
         const grassContext = grassCanvas.getContext('2d');
-        grassContext.fillStyle = '#719c4b';
+        grassContext.fillStyle = '#557d38';
         grassContext.fillRect(0, 0, grassCanvas.width, grassCanvas.height);
-        for (let blade = 0; blade < 1800; blade += 1) {
+        for (let patch = 0; patch < 180; patch += 1) {
             const x = Math.random() * grassCanvas.width;
             const y = Math.random() * grassCanvas.height;
-            const shade = Math.floor(70 + Math.random() * 90);
-            grassContext.strokeStyle = `rgba(${shade}, ${shade + 45}, ${Math.floor(shade * 0.45)}, 0.55)`;
-            grassContext.lineWidth = 1;
+            const radius = 8 + Math.random() * 32;
+            grassContext.fillStyle = `rgba(${30 + Math.floor(Math.random() * 40)}, ${48 + Math.floor(Math.random() * 50)}, 20, 0.12)`;
+            grassContext.beginPath();
+            grassContext.ellipse(x, y, radius, radius * (0.35 + Math.random() * 0.5), Math.random() * Math.PI, 0, Math.PI * 2);
+            grassContext.fill();
+        }
+        for (let blade = 0; blade < 14000; blade += 1) {
+            const x = Math.random() * grassCanvas.width;
+            const y = Math.random() * grassCanvas.height;
+            const height = 3 + Math.random() * 11;
+            const lean = (Math.random() - 0.5) * height * 0.9;
+            const green = Math.floor(75 + Math.random() * 115);
+            const red = Math.floor(35 + Math.random() * 45);
+            grassContext.strokeStyle = `rgba(${red}, ${green}, ${Math.floor(24 + green * 0.32)}, ${0.25 + Math.random() * 0.55})`;
+            grassContext.lineWidth = 0.45 + Math.random() * 1.15;
             grassContext.beginPath();
             grassContext.moveTo(x, y);
-            grassContext.lineTo(x + Math.random() * 3 - 1.5, y - 2 - Math.random() * 3);
+            grassContext.quadraticCurveTo(
+                x + lean * 0.35,
+                y - height * 0.55,
+                x + lean,
+                y - height
+            );
             grassContext.stroke();
         }
         const grassTexture = new THREE.CanvasTexture(grassCanvas);
+        grassTexture.wrapS = THREE.RepeatWrapping;
+        grassTexture.wrapT = THREE.RepeatWrapping;
+        grassTexture.repeat.set(3, 3);
         const floorGeo = new THREE.CircleGeometry(MAP_RADIUS, 128);
         const floorMat = new THREE.MeshLambertMaterial({
             color: 0xffffff,
@@ -308,38 +333,81 @@
 
         const cameraYaw = { value: 0 };
         const cameraPitch = { value: 0.52 };
-        const cameraDistance = 18;
+        let cameraDistance = 18;
         let orbitPointerId = null;
         let previousPointerX = 0;
         let previousPointerY = 0;
+        const orbitPointers = new Map();
+        let previousPinchDistance = null;
         renderer.domElement.addEventListener('pointerdown', (event) => {
-            if (event.button !== 0) return;
+            if (event.pointerType === 'mouse' && event.button !== 0) return;
+            orbitPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            renderer.domElement.setPointerCapture(event.pointerId);
+            if (orbitPointers.size === 2) {
+                const points = [...orbitPointers.values()];
+                previousPinchDistance = Math.hypot(
+                    points[0].x - points[1].x,
+                    points[0].y - points[1].y
+                );
+                orbitPointerId = null;
+                return;
+            }
+            if (orbitPointers.size !== 1) return;
             orbitPointerId = event.pointerId;
             previousPointerX = event.clientX;
             previousPointerY = event.clientY;
-            renderer.domElement.setPointerCapture(event.pointerId);
         });
         renderer.domElement.addEventListener('pointermove', (event) => {
+            if (!orbitPointers.has(event.pointerId)) return;
+            orbitPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (orbitPointers.size === 2) {
+                const points = [...orbitPointers.values()];
+                const pinchDistance = Math.hypot(
+                    points[0].x - points[1].x,
+                    points[0].y - points[1].y
+                );
+                if (previousPinchDistance > 0 && pinchDistance > 0) {
+                    cameraDistance *= previousPinchDistance / pinchDistance;
+                    cameraDistance = Math.max(7, Math.min(48, cameraDistance));
+                }
+                previousPinchDistance = pinchDistance;
+                return;
+            }
             if (event.pointerId !== orbitPointerId) return;
             cameraYaw.value -= (event.clientX - previousPointerX) * 0.006;
             cameraPitch.value = Math.max(
                 0.12,
-                Math.min(1.35, cameraPitch.value - (event.clientY - previousPointerY) * 0.004)
+                Math.min(1.35, cameraPitch.value + (event.clientY - previousPointerY) * 0.004)
             );
             previousPointerX = event.clientX;
             previousPointerY = event.clientY;
         });
         const stopOrbit = (event) => {
+            orbitPointers.delete(event.pointerId);
             if (event.pointerId === orbitPointerId) orbitPointerId = null;
+            previousPinchDistance = null;
+            if (orbitPointers.size === 1) {
+                const [[pointerId, point]] = orbitPointers.entries();
+                orbitPointerId = pointerId;
+                previousPointerX = point.x;
+                previousPointerY = point.y;
+            }
         };
         renderer.domElement.addEventListener('pointerup', stopOrbit);
         renderer.domElement.addEventListener('pointercancel', stopOrbit);
+        renderer.domElement.addEventListener('wheel', (event) => {
+            event.preventDefault();
+            cameraDistance = Math.max(
+                7,
+                Math.min(48, cameraDistance + event.deltaY * 0.025)
+            );
+        }, { passive: false });
 
-        const weatherStatus = document.getElementById('weather-status');
+        const gameTimeLabel = document.getElementById('game-time');
+        const windStatusLabel = document.getElementById('wind-status');
         const compassDirections = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
         const weatherStepMilliseconds = 18000;
         const wind = { speed: 0, direction: 0 };
-        const skyColor = new THREE.Color();
 
         function weatherForStep(step) {
             let seed = (step >>> 0) || 1;
@@ -353,6 +421,34 @@
                 speed: nextRandom() * 45,
                 direction: nextRandom() * Math.PI * 2
             };
+        }
+
+        const gameDayDuration = 12 * 60 * 1000;
+        const skyTimeColors = [
+            { time: 0, color: new THREE.Color(0x08152e) },
+            { time: 0.20, color: new THREE.Color(0x172b50) },
+            { time: 0.25, color: new THREE.Color(0xf39b72) },
+            { time: 0.31, color: new THREE.Color(0x87ceeb) },
+            { time: 0.70, color: new THREE.Color(0x87ceeb) },
+            { time: 0.76, color: new THREE.Color(0xf39b72) },
+            { time: 0.82, color: new THREE.Color(0x172b50) },
+            { time: 1, color: new THREE.Color(0x08152e) }
+        ];
+        const skyColor = new THREE.Color();
+        const dayGrassColor = new THREE.Color(0x9abf68);
+        const nightGrassColor = new THREE.Color(0x35452a);
+        const dawnGrassColor = new THREE.Color(0x806b42);
+        const grassColor = new THREE.Color();
+        const tempColor = new THREE.Color();
+        const sunDirection = new THREE.Vector3();
+
+        function interpolateColor(stops, time, target) {
+            let upperIndex = stops.findIndex((stop) => stop.time >= time);
+            if (upperIndex <= 0) return target.copy(stops[0].color);
+            const lower = stops[upperIndex - 1];
+            const upper = stops[upperIndex];
+            const amount = (time - lower.time) / (upper.time - lower.time);
+            return target.copy(lower.color).lerp(upper.color, amount);
         }
 
         function updateWeather(now) {
@@ -373,22 +469,34 @@
             wind.direction = previousWeather.direction + directionDifference * blend;
             const speedFactor = Math.min(wind.speed / 45, 1);
             const hueShift = Math.cos(wind.direction) * 0.018;
-            skyColor.setHSL(
-                0.57 + hueShift,
-                0.48 - speedFactor * 0.2,
-                0.72 - speedFactor * 0.2
-            );
+            const dayProgress = (now % gameDayDuration) / gameDayDuration;
+            const gameHours = dayProgress * 24;
+            interpolateColor(skyTimeColors, dayProgress, skyColor);
+            tempColor.setHSL(0.57 + hueShift, 0.48 - speedFactor * 0.2, 0.72 - speedFactor * 0.2);
+            skyColor.lerp(tempColor, 0.16 + speedFactor * 0.24);
             scene.background.copy(skyColor);
             scene.fog.color.copy(skyColor);
-            floorMat.color.setHSL(
-                0.27 + Math.sin(wind.direction) * 0.025,
-                0.42 - speedFactor * 0.12,
-                0.72 - speedFactor * 0.18
+            const daylight = Math.max(0, Math.sin((dayProgress - 0.25) * Math.PI * 2));
+            grassColor.copy(nightGrassColor).lerp(dayGrassColor, daylight);
+            grassColor.lerp(dawnGrassColor, Math.max(0, 1 - Math.abs(dayProgress - 0.25) / 0.08) * 0.45);
+            grassColor.offsetHSL(
+                Math.sin(wind.direction) * 0.012,
+                -speedFactor * 0.04,
+                -speedFactor * 0.08
             );
+            floorMat.color.copy(grassColor);
+            sunlight.intensity = 0.12 + daylight * 1.35;
+            hemisphereLight.intensity = 0.2 + daylight * 1.5;
+            const sunAngle = dayProgress * Math.PI * 2;
+            sunDirection.set(Math.cos(sunAngle), Math.sin(sunAngle), 0.35).normalize();
+            sunlight.position.copy(sunDirection).multiplyScalar(90);
             const compassIndex = Math.round(
                 ((wind.direction + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)
             ) % compassDirections.length;
-            weatherStatus.textContent =
+            const hours = Math.floor(gameHours).toString().padStart(2, '0');
+            const minutes = Math.floor((gameHours % 1) * 60).toString().padStart(2, '0');
+            gameTimeLabel.textContent = `Time: ${hours}:${minutes}`;
+            windStatusLabel.textContent =
                 `Wind: ${wind.speed.toFixed(1)} km/h · ${compassDirections[compassIndex]}`;
         }
 
@@ -414,7 +522,7 @@
         );
         camera.lookAt(cube.position.x, cube.position.y + 1, cube.position.z);
 
-        const APP_VERSION = 'v0.6.1-alpha';
+        const APP_VERSION = 'v0.6.5-alpha';
         document.getElementById('version-label').textContent = APP_VERSION;
         let socket;
         const remotePlayers = {};
