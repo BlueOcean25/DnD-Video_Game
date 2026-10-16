@@ -29,9 +29,9 @@ ACCOUNT_FILE = Path(os.environ.get("ACCOUNT_FILE", BACKEND_DIR / "account.csv"))
 CODES_FILE = Path(os.environ.get("CODES_FILE", BACKEND_DIR / "codes.csv"))
 PLAYERS_FILE = BACKEND_DIR / "players.csv"
 LOG_FILE = BACKEND_DIR / "server.log"
-GAME_VERSION = "v0.6.5-alpha"
+GAME_VERSION = "v0.6.6-alpha"
 POSITION_SAVE_INTERVAL = 1.0
-MAP_RADIUS = 64.0
+MAP_RADIUS = 128.0
 connected_players = set()
 
 

@@ -259,7 +259,7 @@
     <button id="jump-button" type="button">JUMP</button>
 
     <script>
-        const MAP_RADIUS = 64;
+        const MAP_RADIUS = 128;
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87ceeb);
         scene.fog = new THREE.Fog(scene.background, 100, 240);
@@ -322,6 +322,100 @@
         const floor = new THREE.Mesh(floorGeo, floorMat);
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
+
+        function createGrassClumpGeometry() {
+            const positions = [];
+            const indices = [];
+            const bladeDirections = [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3];
+            const segments = 3;
+            const width = 0.045;
+            const height = 0.72;
+
+            for (const angle of bladeDirections) {
+                const directionX = Math.sin(angle);
+                const directionZ = Math.cos(angle);
+                const sideX = directionZ;
+                const sideZ = -directionX;
+                const firstVertex = positions.length / 3;
+
+                for (let segment = 0; segment <= segments; segment += 1) {
+                    const progress = segment / segments;
+                    const bend = progress * progress * 0.14;
+                    const bladeWidth = width * (1 - progress * 0.88);
+                    const centerX = directionX * bend;
+                    const centerZ = directionZ * bend;
+                    const y = height * progress;
+                    positions.push(
+                        centerX - sideX * bladeWidth,
+                        y,
+                        centerZ - sideZ * bladeWidth,
+                        centerX + sideX * bladeWidth,
+                        y,
+                        centerZ + sideZ * bladeWidth
+                    );
+
+                    if (segment < segments) {
+                        const left = firstVertex + segment * 2;
+                        const right = left + 1;
+                        indices.push(left, right, left + 2, right, right + 2, left + 2);
+                    }
+                }
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute(
+                'position',
+                new THREE.Float32BufferAttribute(positions, 3)
+            );
+            geometry.setIndex(indices);
+            geometry.computeVertexNormals();
+            return geometry;
+        }
+
+        const grassBladeCount =
+            ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? 2200 : 6500;
+        const grassBladeGeometry = createGrassClumpGeometry();
+        const grassBladeMaterial = new THREE.MeshLambertMaterial({
+            color: 0xffffff,
+            vertexColors: true,
+            side: THREE.DoubleSide
+        });
+        const grassBlades = new THREE.InstancedMesh(
+            grassBladeGeometry,
+            grassBladeMaterial,
+            grassBladeCount
+        );
+        const grassBladeTransform = new THREE.Object3D();
+        const grassBladeColor = new THREE.Color();
+
+        for (let blade = 0; blade < grassBladeCount; blade += 1) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.sqrt(Math.random()) * (MAP_RADIUS - 0.5);
+            grassBladeTransform.position.set(
+                Math.cos(angle) * distance,
+                0.025,
+                Math.sin(angle) * distance
+            );
+            grassBladeTransform.rotation.y = Math.random() * Math.PI * 2;
+            const scale = 0.55 + Math.random() * 0.9;
+            grassBladeTransform.scale.set(
+                scale * (0.75 + Math.random() * 0.5),
+                scale,
+                scale * (0.75 + Math.random() * 0.5)
+            );
+            grassBladeTransform.updateMatrix();
+            grassBlades.setMatrixAt(blade, grassBladeTransform.matrix);
+            grassBladeColor.setHSL(
+                0.24 + Math.random() * 0.08,
+                0.48 + Math.random() * 0.3,
+                0.3 + Math.random() * 0.23
+            );
+            grassBlades.setColorAt(blade, grassBladeColor);
+        }
+        grassBlades.instanceMatrix.needsUpdate = true;
+        if (grassBlades.instanceColor) grassBlades.instanceColor.needsUpdate = true;
+        grassBlades.computeBoundingSphere();
+        scene.add(grassBlades);
 
         const boundary = new THREE.Mesh(
             new THREE.TorusGeometry(MAP_RADIUS, 0.3, 8, 128),
@@ -522,7 +616,7 @@
         );
         camera.lookAt(cube.position.x, cube.position.y + 1, cube.position.z);
 
-        const APP_VERSION = 'v0.6.5-alpha';
+        const APP_VERSION = 'v0.6.6-alpha';
         document.getElementById('version-label').textContent = APP_VERSION;
         let socket;
         const remotePlayers = {};
