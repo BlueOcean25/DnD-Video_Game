@@ -616,7 +616,7 @@
         );
         camera.lookAt(cube.position.x, cube.position.y + 1, cube.position.z);
 
-        const APP_VERSION = 'v0.6.6-alpha';
+        const APP_VERSION = 'v0.6.9-alpha';
         document.getElementById('version-label').textContent = APP_VERSION;
         let socket;
         const remotePlayers = {};
@@ -660,13 +660,29 @@
             const connection = new WebSocket('wss://dnd-video-game.onrender.com');
             connection.playerId = playerId;
             socket = connection;
+            let connectionTimedOut = false;
+            const connectionTimeout = window.setTimeout(() => {
+                if (connection.readyState !== WebSocket.CONNECTING) return;
+                connectionTimedOut = true;
+                authStatus.textContent =
+                    'The server is taking too long to respond. Retrying the connection...';
+                connection.close();
+            }, 30000);
 
             connection.onopen = function() {
+                window.clearTimeout(connectionTimeout);
                 authStatus.textContent = reloginRequired
                     ? 'Connection restored. Log in again to rejoin.'
                     : 'Connected. Log in or reset your password.';
                 sendAuthMessage({ type: 'check_version', version: APP_VERSION });
                 sendAuthMessage({ type: 'get_account_names' });
+            };
+
+            connection.onerror = function() {
+                if (socket === connection) {
+                    authStatus.textContent =
+                        'Could not reach the game server. Retrying the connection...';
+                }
             };
 
             connection.onmessage = function(event) {
@@ -784,6 +800,7 @@
 
             connection.onclose = function() {
                 if (socket !== connection) return;
+                window.clearTimeout(connectionTimeout);
                 if (isAuthenticated) {
                     isAuthenticated = false;
                     reloginRequired = true;
@@ -793,7 +810,10 @@
                     settingsToggle.setAttribute('aria-expanded', 'false');
                     document.getElementById('change-password-form').reset();
                 }
-                authStatus.textContent = 'Connection lost. Reconnecting to the game server...';
+                if (!connectionTimedOut) {
+                    authStatus.textContent =
+                        'Connection closed. Reconnecting to the game server...';
+                }
                 window.setTimeout(connectToServer, 3000);
             };
         }

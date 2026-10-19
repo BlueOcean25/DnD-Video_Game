@@ -1,4 +1,5 @@
 bcrypt==5.0.0
 websockets>=14,<16
+pip
 psycopg[binary]>=3.2,<4
 python-dotenv>=1,<2

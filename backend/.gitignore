@@ -2,6 +2,7 @@
 abilities.csv
 account.csv
 codes.csv
+data_store.py
 players.csv
 pull.py
 server.log

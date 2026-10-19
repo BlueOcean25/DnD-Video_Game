@@ -15,6 +15,7 @@ from data_store import (
     fetch_dataset,
     normalize_row,
     record_key,
+    reorder_dataset_columns,
     replace_dataset,
 )
 from psycopg import sql
@@ -60,15 +61,21 @@ def read_csv_dataset(dataset, path):
         return fields, rows
 
 
-def align_rows_to_fields(rows, fields):
-    aligned = {}
-    for key, row in rows.items():
-        values_by_lower = {field.lower(): value for field, value in row.items()}
-        aligned[key] = {
-            field: values_by_lower.get(field.lower(), "")
-            for field in fields
-        }
-    return aligned
+def display_record(row):
+    if row is None:
+        return "  <record absent>"
+    safe_row = {
+        field: (
+            "<redacted>"
+            if any(
+                secret_word in field.casefold()
+                for secret_word in ("password", "hash", "code", "token")
+            )
+            else value
+        )
+        for field, value in row.items()
+    }
+    return json.dumps(safe_row, ensure_ascii=False, indent=2)
 
 
 def choose_conflict(dataset, key, csv_row, neon_row):
@@ -76,16 +83,31 @@ def choose_conflict(dataset, key, csv_row, neon_row):
         display_key = ", ".join(json.loads(key))
     except (json.JSONDecodeError, TypeError):
         display_key = key
-    changed_fields = sorted(
-        field
-        for field in set(csv_row or {}) | set(neon_row or {})
-        if (csv_row or {}).get(field) != (neon_row or {}).get(field)
+    print(f"\nConflict in {dataset} [{display_key}]: both sides changed.")
+    csv_values = csv_row or {}
+    neon_values = neon_row or {}
+    fields = sorted(
+        set(csv_values) | set(neon_values),
+        key=str.casefold,
     )
-    print(
-        f"\nConflict in {dataset} [{display_key}]: "
-        "both CSV and Neon changed since the previous sync. "
-        f"Different fields: {', '.join(changed_fields) or '(record deleted)'}."
-    )
+    changed_fields = [
+        field for field in fields
+        if csv_values.get(field) != neon_values.get(field)
+    ]
+    if changed_fields:
+        print("Different values:")
+        for field in changed_fields:
+            csv_value = csv_values.get(field, "<column absent>")
+            neon_value = neon_values.get(field, "<column absent>")
+            if any(secret_word in field.casefold() for secret_word in ("password", "hash", "code", "token")):
+                csv_value = "<redacted>"
+                neon_value = "<redacted>"
+            print(f"  CSV.{field}: {csv_value}")
+            print(f"  Neon.{field}: {neon_value}")
+    print("Full CSV record:")
+    print(display_record(csv_row))
+    print("Full Neon record:")
+    print(display_record(neon_row))
     while True:
         choice = input("Keep [c]sv or [n]eon? ").strip().lower()
         if choice in {"c", "csv"}:
@@ -98,9 +120,28 @@ def choose_conflict(dataset, key, csv_row, neon_row):
 def merge_dataset(dataset, csv_rows, neon_rows, baseline, resolver):
     result = {}
     conflicts = 0
+    fields = []
+    seen_fields = set()
+    for row in list(csv_rows.values()) + list(neon_rows.values()):
+        for field in row:
+            if field.casefold() not in seen_fields:
+                fields.append(field)
+                seen_fields.add(field.casefold())
+
+    def canonical_row(row):
+        if row is None:
+            return None
+        values_by_lower = {field.casefold(): value for field, value in row.items()}
+        return {
+            field: values_by_lower.get(field.casefold(), "")
+            for field in fields
+        }
+
     for key in sorted(set(csv_rows) | set(neon_rows) | set(baseline)):
-        csv_row = csv_rows.get(key)
-        neon_row = neon_rows.get(key)
+        raw_csv_row = csv_rows.get(key)
+        raw_neon_row = neon_rows.get(key)
+        csv_row = canonical_row(raw_csv_row)
+        neon_row = canonical_row(raw_neon_row)
         csv_hash = row_hash(csv_row)
         neon_hash = row_hash(neon_row)
         has_baseline = key in baseline
@@ -115,7 +156,7 @@ def merge_dataset(dataset, csv_rows, neon_rows, baseline, resolver):
                 result[key] = csv_row
             else:
                 conflicts += 1
-                choice = resolver(dataset, key, csv_row, neon_row)
+                choice = resolver(dataset, key, raw_csv_row, raw_neon_row)
                 if choice not in {"csv", "neon"}:
                     raise ValueError("Conflict resolver must choose CSV or Neon")
                 result[key] = csv_row if choice == "csv" else neon_row
@@ -125,11 +166,53 @@ def merge_dataset(dataset, csv_rows, neon_rows, baseline, resolver):
             result[key] = csv_row
         else:
             conflicts += 1
-            choice = resolver(dataset, key, csv_row, neon_row)
+            choice = resolver(dataset, key, raw_csv_row, raw_neon_row)
             if choice not in {"csv", "neon"}:
                 raise ValueError("Conflict resolver must choose CSV or Neon")
             result[key] = csv_row if choice == "csv" else neon_row
     return result, conflicts
+
+
+def ordered_neon_fields(csv_fields, neon_fields, rows):
+    result = []
+    seen = set()
+    for field in csv_fields:
+        if field.casefold() not in seen:
+            result.append(field)
+            seen.add(field.casefold())
+
+    for field in neon_fields:
+        if field.casefold() in seen:
+            continue
+        has_value = any(
+            row is not None
+            and next(
+                (
+                    value
+                    for name, value in row.items()
+                    if name.casefold() == field.casefold()
+                ),
+                "",
+            ) != ""
+            for row in rows.values()
+        )
+        if has_value:
+            result.append(field)
+            seen.add(field.casefold())
+    return result
+
+
+def project_row(row, fields):
+    if row is None:
+        return None
+    values_by_lower = {
+        field.casefold(): value
+        for field, value in row.items()
+    }
+    return {
+        field: values_by_lower.get(field.casefold(), "")
+        for field in fields
+    }
 
 
 def write_csv_dataset(path, fields, rows):
@@ -167,20 +250,44 @@ def sync(dry_run=False):
         for dataset, path in CSV_PATHS.items()
     }
     with connect() as connection:
-        ensure_schema(
-            connection,
-            fields_by_dataset={
-                dataset: fields
-                for dataset, (fields, _) in csv_snapshots.items()
-            },
-        )
-        neon_snapshots = {
-            dataset: fetch_dataset(connection, dataset)
-            for dataset in DATASETS
-        }
-        state_rows = connection.execute(
-            "SELECT dataset, record_key, last_hash FROM dnd_sync_state"
-        ).fetchall()
+        if dry_run:
+            neon_snapshots = {}
+            for dataset, definition in DATASETS.items():
+                table_exists = connection.execute(
+                    "SELECT to_regclass(%s)",
+                    (definition["table_name"],),
+                ).fetchone()[0]
+                neon_snapshots[dataset] = (
+                    fetch_dataset(connection, dataset)
+                    if table_exists
+                    else ([], {})
+                )
+            state_exists = connection.execute(
+                "SELECT to_regclass('dnd_sync_state')"
+            ).fetchone()[0]
+            state_rows = (
+                connection.execute(
+                    "SELECT dataset, record_key, last_hash FROM dnd_sync_state"
+                ).fetchall()
+                if state_exists
+                else []
+            )
+        else:
+            ensure_schema(
+                connection,
+                fields_by_dataset={
+                    dataset: fields
+                    for dataset, (fields, _) in csv_snapshots.items()
+                },
+                include_defaults=False,
+            )
+            neon_snapshots = {
+                dataset: fetch_dataset(connection, dataset)
+                for dataset in DATASETS
+            }
+            state_rows = connection.execute(
+                "SELECT dataset, record_key, last_hash FROM dnd_sync_state"
+            ).fetchall()
     baseline_by_dataset = {dataset: {} for dataset in DATASETS}
     for dataset, key, last_hash in state_rows:
         baseline_by_dataset[dataset][key] = last_hash
@@ -198,9 +305,8 @@ def sync(dry_run=False):
             )
 
     for dataset in DATASETS:
-        _, csv_rows = csv_snapshots[dataset]
+        csv_fields, csv_rows = csv_snapshots[dataset]
         neon_fields, neon_rows = neon_snapshots[dataset]
-        csv_rows = align_rows_to_fields(csv_rows, neon_fields)
         target_rows, conflicts = merge_dataset(
             dataset,
             csv_rows,
@@ -208,11 +314,57 @@ def sync(dry_run=False):
             baseline_by_dataset[dataset],
             resolver,
         )
+        storage_fields = list(
+            {
+                field.casefold(): field
+                for field in neon_fields + csv_fields
+            }.values()
+        )
+        neon_fields = ordered_neon_fields(
+            csv_fields,
+            neon_fields,
+            target_rows,
+        )
+        storage_rows = {
+            key: (
+                None
+                if row is None
+                else {
+                    field: next(
+                        (
+                            value
+                            for name, value in row.items()
+                            if name.casefold() == field.casefold()
+                        ),
+                        "",
+                    )
+                    for field in storage_fields
+                }
+            )
+            for key, row in target_rows.items()
+        }
+        target_rows = {
+            key: (
+                None
+                if row is None
+                else project_row(row, neon_fields)
+            )
+            for key, row in storage_rows.items()
+        }
+        schema_changed = [
+            field.casefold() for field in neon_fields
+        ] != [
+            field.casefold() for field in neon_snapshots[dataset][0]
+        ]
         plans[dataset] = {
-            "fields": neon_fields,
+            "csv_fields": csv_fields,
+            "storage_fields": storage_fields,
+            "neon_fields": neon_fields,
             "csv_rows": csv_rows,
             "neon_rows": neon_rows,
+            "storage_rows": storage_rows,
             "target_rows": target_rows,
+            "schema_changed": schema_changed,
         }
         total_conflicts += conflicts
 
@@ -220,19 +372,24 @@ def sync(dry_run=False):
     for plan in plans.values():
         keys = set(plan["csv_rows"]) | set(plan["neon_rows"])
         changes += sum(
-            row_hash(plan["csv_rows"].get(key))
-            != row_hash(plan["target_rows"].get(key))
+            row_hash(project_row(plan["csv_rows"].get(key), plan["csv_fields"]))
+            != row_hash(project_row(plan["target_rows"].get(key), plan["csv_fields"]))
             for key in keys
         )
         changes += sum(
-            row_hash(plan["neon_rows"].get(key))
+            row_hash(project_row(plan["neon_rows"].get(key), plan["neon_fields"]))
             != row_hash(plan["target_rows"].get(key))
             for key in keys
         )
     if dry_run:
+        schema_changes = sum(
+            plan["schema_changed"]
+            for plan in plans.values()
+        )
         print(
-            f"Dry run: {changes} side(s) would change; "
-            f"{total_conflicts} conflict(s) resolved for this run."
+            f"Dry run: {changes} data side(s) and {schema_changes} Neon "
+            f"table schema(s) would change; {total_conflicts} conflict(s) "
+            "would need a choice."
         )
         return
 
@@ -274,22 +431,29 @@ def sync(dry_run=False):
                 "Neon changed while sync was waiting for conflict decisions; "
                 "no changes were applied. Run sync.py again."
             )
+        removed_columns = {}
         for dataset, plan in plans.items():
             replace_dataset(
                 connection,
                 dataset,
-                plan["fields"],
+                plan["storage_fields"],
                 [
                     row
-                    for row in plan["target_rows"].values()
+                    for row in plan["storage_rows"].values()
                     if row is not None
                 ],
             )
+            removed_columns[dataset], reordered = reorder_dataset_columns(
+                connection,
+                dataset,
+                plan["neon_fields"],
+            )
+            plan["reordered"] = reordered
 
     for dataset, plan in plans.items():
         write_csv_dataset(
             CSV_PATHS[dataset],
-            plan["fields"],
+            plan["csv_fields"],
             plan["target_rows"],
         )
 
@@ -312,6 +476,17 @@ def sync(dry_run=False):
         f"Sync complete: {changes} side(s) updated; "
         f"{total_conflicts} conflict(s) resolved."
     )
+    for dataset, columns in removed_columns.items():
+        if columns:
+            print(
+                f"Removed empty Neon columns from "
+                f"{DATASETS[dataset]['table_name']}: {', '.join(columns)}"
+            )
+        if plans[dataset]["reordered"]:
+            print(
+                f"Reordered Neon columns in "
+                f"{DATASETS[dataset]['table_name']} to match CSV headers."
+            )
 
 
 def main():
