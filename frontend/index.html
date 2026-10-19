@@ -190,6 +190,70 @@
             user-select: none;
         }
     </style>
+    <script>
+        (() => {
+            const serverUrl = 'wss://dnd-video-game.onrender.com';
+            let startupFailed = false;
+
+            function setStartupStatus(message) {
+                window.dndStartupStatus = message;
+                const status = document.getElementById('auth-status');
+                if (status) status.textContent = message;
+            }
+
+            window.addEventListener('error', (event) => {
+                if (event.target !== window) return;
+                startupFailed = true;
+                setStartupStatus(
+                    'The game could not start because a browser script failed. Reload the page or try another browser.'
+                );
+            });
+
+            window.addEventListener('unhandledrejection', () => {
+                startupFailed = true;
+                setStartupStatus(
+                    'The game could not start because a browser script failed. Reload the page or try another browser.'
+                );
+            });
+
+            document.addEventListener('DOMContentLoaded', () => {
+                if (window.dndStartupStatus) {
+                    setStartupStatus(window.dndStartupStatus);
+                }
+            });
+
+            try {
+                const connection = new WebSocket(serverUrl);
+                window.dndGameSocket = connection;
+                connection.addEventListener('open', () => {
+                    if (!startupFailed) {
+                        setStartupStatus('Connected. Starting the game...');
+                    }
+                }, { once: true });
+                connection.addEventListener('error', () => {
+                    if (!startupFailed) {
+                        setStartupStatus(
+                            'Could not reach the game server. Retrying the connection...'
+                        );
+                    }
+                }, { once: true });
+                window.setTimeout(() => {
+                    if (
+                        connection.readyState === WebSocket.CONNECTING
+                        && !startupFailed
+                    ) {
+                        setStartupStatus(
+                            'The server is taking too long to respond. Retrying the connection...'
+                        );
+                    }
+                }, 30000);
+            } catch (error) {
+                setStartupStatus(
+                    'This browser could not open a game-server connection. Try another browser or network.'
+                );
+            }
+        })();
+    </script>
     <!-- WebGL 3D graphics rendering core blueprint library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -616,7 +680,7 @@
         );
         camera.lookAt(cube.position.x, cube.position.y + 1, cube.position.z);
 
-        const APP_VERSION = 'v0.6.9-alpha';
+        const APP_VERSION = 'v0.6.10-alpha';
         document.getElementById('version-label').textContent = APP_VERSION;
         let socket;
         const remotePlayers = {};
@@ -657,7 +721,17 @@
         }
 
         function connectToServer() {
-            const connection = new WebSocket('wss://dnd-video-game.onrender.com');
+            let connection = window.dndGameSocket;
+            if (
+                !connection
+                || (
+                    connection.readyState !== WebSocket.CONNECTING
+                    && connection.readyState !== WebSocket.OPEN
+                )
+            ) {
+                connection = new WebSocket('wss://dnd-video-game.onrender.com');
+                window.dndGameSocket = connection;
+            }
             connection.playerId = playerId;
             socket = connection;
             let connectionTimedOut = false;
@@ -816,6 +890,10 @@
                 }
                 window.setTimeout(connectToServer, 3000);
             };
+
+            if (connection.readyState === WebSocket.OPEN) {
+                connection.onopen();
+            }
         }
 
         connectToServer();
